@@ -1,8 +1,10 @@
-# CloudWOL / Cloud-Triggered Wake-on-LAN
+# cf-wake-on-lan
 
-An Always-On Device (AOD) Wake-on-LAN (WOL) remote server starter powered by **Cloudflare Workers + Cloudflare KV (100% Free Tier)** and microcontrollers:
-1. **ESP32 Dev Board** (Recommended: standalone, fast TLS/HTTPS, low power)
-2. **Arduino Uno + ESP8266 ESP-12E WiFi Shield** (Alternative combination)
+An Always-On Device (AOD) Wake-on-LAN (WOL) remote server starter powered by **Cloudflare Workers + Cloudflare KV (100% Free Tier)**.
+
+### 🔌 Hardware Configuration
+- **Primary Board**: **Arduino Uno R3 + ESP8266 ESP-12E WiFi Shield** (Dedicated Always-On WOL Controller)
+- **Alternative / Backup Board**: **ESP32 Dev Board** (Alternative standalone firmware included)
 
 ---
 
@@ -81,23 +83,28 @@ Both boards automatically boot and resume polling on power restore (AOD design).
 
 ### 2. Microcontroller Setup
 
-#### Option A: ESP32 Dev Board (Recommended)
+#### 🌟 Primary Choice: Arduino Uno + ESP8266 ESP-12E Shield
+1. Mount the ESP8266 ESP-12E WiFi shield directly on top of the Arduino Uno.
+2. Configure shield DIP switches / jumpers:
+   - For **SoftwareSerial mode** (Uno Pins D2 as RX, D3 as TX): Set DIP switches according to the shield's pin diagram (or route jumpers from shield TX -> Uno D2, shield RX -> Uno D3).
+3. Open [`arduino_uno_esp8266_wol.ino`](file:///Users/janlofredy/Documents/ServerStarter/firmware/arduino_uno_esp8266/arduino_uno_esp8266_wol.ino).
+4. Update:
+   - `WIFI_SSID` & `WIFI_PASSWORD`
+   - `CF_HOST` (e.g. `YOUR_WORKER_SUBDOMAIN.workers.dev`)
+   - `AUTH_TOKEN` (your secret key)
+   - `SERVER_MAC` (target server's MAC address)
+5. Select **Arduino Uno** in Arduino IDE and upload.
+6. Power the Uno via a 5V USB adapter or DC barrel jack (7-12V). It operates as an AOD (Always-On Device), booting and polling automatically.
+
+---
+
+#### 🔄 Alternative Choice: ESP32 Dev Board (Backup Option)
+*(Use this if you ever repurpose the Arduino or need a standalone board)*
 1. In Arduino IDE:
    - Install **ESP32 by Espressif Systems** via Boards Manager.
-   - Install **ArduinoJson** library via Library Manager.
-2. Duplicate `firmware/config.h.example` to `firmware/config.h` and configure:
-   - Wi-Fi SSID & Password
-   - Your Cloudflare Worker URL
-   - Secret Auth Token
-   - Target Server MAC Address
-3. Connect ESP32 via Micro-USB and upload [esp32_wol.ino](file:///Users/janlofredy/Documents/ServerStarter/firmware/esp32/esp32_wol.ino).
-
-#### Option B: Arduino Uno + ESP8266 ESP-12E Shield
-1. Mount the ESP8266 ESP-12E WiFi shield onto the Arduino Uno.
-2. Set the shield DIP switches to SoftwareSerial mode (e.g., Uno Pin 2 & 3).
-3. Open [arduino_uno_esp8266_wol.ino](file:///Users/janlofredy/Documents/ServerStarter/firmware/arduino_uno_esp8266/arduino_uno_esp8266_wol.ino).
-4. Update the Wi-Fi credentials, Worker domain, token, and MAC address.
-5. Upload to Arduino Uno.
+   - Install **ArduinoJson** via Library Manager.
+2. Copy `firmware/config.h.example` to `firmware/config.h` and populate your network & Cloudflare credentials.
+3. Open [`esp32_wol.ino`](file:///Users/janlofredy/Documents/ServerStarter/firmware/esp32/esp32_wol.ino), select your ESP32 board, and upload.
 
 ---
 
