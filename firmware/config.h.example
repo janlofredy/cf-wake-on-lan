@@ -1,0 +1,21 @@
+#pragma once
+
+// Wi-Fi Configuration
+#define WIFI_SSID       "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+
+// Cloudflare Worker Configuration
+// Example: "https://wol-cloud-trigger.your-subdomain.workers.dev"
+#define CF_WORKER_URL   "https://YOUR_WORKER_SUBDOMAIN.workers.dev"
+#define AUTH_TOKEN      "CHANGE_ME_SECRET_TOKEN"
+
+// Default Target Server MAC Address (Wake-on-LAN target)
+// Format: 6 bytes
+#define DEFAULT_SERVER_MAC {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+
+// Polling interval in milliseconds
+// 30,000 ms = 30s (2,880 requests/day, well under Cloudflare KV free limit of 100k/day)
+#define POLL_INTERVAL_MS 30000
+
+// WOL Broadcast Port (typically 9 or 7)
+#define WOL_PORT 9

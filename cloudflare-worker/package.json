@@ -1,0 +1,10 @@
+{
+  "name": "wol-cloud-trigger",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker trigger endpoint using KV store for Wake-on-LAN microcontrollers",
+  "main": "src/index.js",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {}
+}
