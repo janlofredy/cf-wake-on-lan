@@ -119,16 +119,6 @@ void acknowledgeTrigger() {
   http.end();
 }
 
-// Send MCU heartbeat
-void sendHeartbeat() {
-  HTTPClient http;
-  String url = String(CF_WORKER_URL) + "/mcu/heartbeat";
-  http.begin(url);
-  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-  http.POST("{}");
-  http.end();
-}
-
 // Check Cloudflare Worker for WOL trigger
 void checkWOLTrigger() {
   HTTPClient http;
@@ -192,13 +182,17 @@ void loop() {
   // --- INTERVAL 2: Cloudflare Synchronization ---
   if (now - lastCfSyncTime >= CF_SYNC_INTERVAL_MS || lastCfSyncTime == 0) {
     lastCfSyncTime = now;
-    sendHeartbeat();
 
-    // 1. If status changed from last sent status, update Cloudflare
-    if (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN) {
-      Serial.println("[Status Change] Updating Cloudflare...");
+    // 1. If status changed or periodic refresh (~60s), ping Cloudflare to keep AOD health alive
+    static unsigned long lastSentTime = 0;
+    bool statusChanged = (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN);
+    bool periodicRefresh = (now - lastSentTime >= 60000 || lastSentTime == 0);
+
+    if (statusChanged || periodicRefresh) {
+      Serial.println("[AOD Health/Status] Pinging Cloudflare with server status...");
       updateServerStatusOnCloudflare(currentServerState);
       lastSentServerState = currentServerState;
+      lastSentTime = now;
     }
 
     // 2. When server is OFF (or initial state), check if there is a trigger

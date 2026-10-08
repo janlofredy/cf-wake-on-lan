@@ -183,24 +183,6 @@ void checkWOLTrigger() {
   sendCommand("AT+CIPCLOSE", 1000, "OK");
 }
 
-void sendHeartbeat() {
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (sendCommand(startSSL, 5000, "OK")) {
-    String req = "POST /mcu/heartbeat HTTP/1.1\r\n";
-    req += "Host: " + String(CF_HOST) + "\r\n";
-    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
-    req += "Content-Length: 0\r\n";
-    req += "Connection: close\r\n\r\n";
-
-    String sendCmd = "AT+CIPSEND=" + String(req.length());
-    if (sendCommand(sendCmd, 3000, ">")) {
-      espSerial.print(req);
-    }
-    delay(300);
-    sendCommand("AT+CIPCLOSE", 1000, "OK");
-  }
-}
-
 void setup() {
   Serial.begin(9600);
   espSerial.begin(9600);
@@ -234,13 +216,17 @@ void loop() {
   // --- INTERVAL 2: Cloudflare Synchronization ---
   if (now - lastCfSyncTime >= CF_SYNC_INTERVAL || lastCfSyncTime == 0) {
     lastCfSyncTime = now;
-    sendHeartbeat();
 
-    // 1. If server status is different from the last sent status, update Cloudflare
-    if (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN) {
-      Serial.println(F("[Status Change] Updating Cloudflare Worker..."));
+    // 1. Update Cloudflare whenever status changes, or periodically (every ~60s) to keep AOD health alive
+    static unsigned long lastSentTime = 0;
+    bool statusChanged = (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN);
+    bool periodicRefresh = (now - lastSentTime >= 60000 || lastSentTime == 0);
+
+    if (statusChanged || periodicRefresh) {
+      Serial.println(F("[AOD Health/Status] Pinging Cloudflare with server status..."));
       updateServerStatusOnCloudflare(currentServerState);
       lastSentServerState = currentServerState;
+      lastSentTime = now;
     }
 
     // 2. At the same time, when status is OFF (or on initial boot), check for triggers
