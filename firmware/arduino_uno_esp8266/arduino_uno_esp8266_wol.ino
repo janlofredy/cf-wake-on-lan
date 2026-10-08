@@ -1,7 +1,7 @@
 #include <SoftwareSerial.h>
 
 /**
- * Arduino Uno + ESP8266 ESP-12E WiFi Shield
+ * Arduino Uno R3 + ESP8266 ESP-12E WiFi Shield
  * 
  * Hardware Setup:
  * - Arduino Uno with ESP8266 ESP-12E WiFi Shield mounted on top.
@@ -12,28 +12,40 @@
  *     Uno Pin 2 -> Shield TX
  *     Uno Pin 3 -> Shield RX
  *
- * NOTE: Since Wake-on-LAN magic packets are UDP broadcast packets and Cloudflare uses HTTPS,
- * the ESP8266 handles the HTTPS request (using AT commands) and UDP broadcast.
+ * Flow:
+ * - Local server polling loop: checks if server is reachable on LAN at SERVER_CHECK_INTERVAL_MS.
+ * - Tracks 'currentServerStatus' vs 'lastSentServerStatus'.
+ * - Cloudflare sync loop: runs at CF_SYNC_INTERVAL_MS.
+ *     1. If status changed, updates status on Cloudflare Worker.
+ *     2. When status is OFF (or during sync), checks Cloudflare for pending WOL trigger.
+ *     3. Dispatches WOL UDP packet if triggered, then sends acknowledgment.
  */
 
 // SoftwareSerial pins connected to ESP8266 shield
 SoftwareSerial espSerial(2, 3); // RX, TX
 
-// Replace with your credentials and Worker host
+// WiFi & Cloudflare Configuration
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.workers.dev";
 const char* AUTH_TOKEN    = "CHANGE_ME_SECRET_TOKEN";
 
-// Server MAC to wake
-const char* SERVER_MAC = "AA:BB:CC:DD:EE:FF";
-
-// Optional: Target Server IP and Port for reachability check (e.g. Port 22 SSH or 80 HTTP or 3389 RDP)
+// Server Configuration
+const char* SERVER_MAC    = "AA:BB:CC:DD:EE:FF";
 const char* SERVER_IP     = "192.168.1.100";
 const int   SERVER_PORT   = 22;
 
-unsigned long lastPoll = 0;
-const unsigned long POLL_INTERVAL = 30000; // 30 seconds
+// Timers (Two separate polling intervals)
+const unsigned long SERVER_CHECK_INTERVAL = 5000;   // Check server every 5 seconds locally
+const unsigned long CF_SYNC_INTERVAL      = 20000;  // Sync with Cloudflare every 20 seconds
+
+unsigned long lastServerCheckTime = 0;
+unsigned long lastCfSyncTime      = 0;
+
+// State Memory
+enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
+ServerState currentServerState   = STATE_UNKNOWN;
+ServerState lastSentServerState  = STATE_UNKNOWN;
 
 bool sendCommand(String cmd, unsigned long timeout, String expectedResponse) {
   espSerial.println(cmd);
@@ -52,8 +64,8 @@ bool sendCommand(String cmd, unsigned long timeout, String expectedResponse) {
   return false;
 }
 
-// Check if target server port is responding on LAN
-bool checkServerOnline() {
+// Check local LAN reachability of the target server
+bool probeServer() {
   String pingCmd = "AT+CIPSTART=\"TCP\",\"" + String(SERVER_IP) + "\"," + String(SERVER_PORT);
   if (sendCommand(pingCmd, 2000, "CONNECT") || sendCommand(pingCmd, 1000, "OK")) {
     sendCommand("AT+CIPCLOSE", 1000, "OK");
@@ -63,133 +75,10 @@ bool checkServerOnline() {
   return false;
 }
 
-// Report server status to Cloudflare
-void reportServerStatus(bool isOnline) {
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (sendCommand(startSSL, 5000, "OK")) {
-    String body = "{\"status\":\"" + String(isOnline ? "ONLINE" : "OFFLINE") + "\"}";
-    String req = "POST /server/ping HTTP/1.1\r\n";
-    req += "Host: " + String(CF_HOST) + "\r\n";
-    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
-    req += "Content-Type: application/json\r\n";
-    req += "Content-Length: " + String(body.length()) + "\r\n";
-    req += "Connection: close\r\n\r\n";
-    req += body;
-
-    String sendCmd = "AT+CIPSEND=" + String(req.length());
-    if (sendCommand(sendCmd, 3000, ">")) {
-      espSerial.print(req);
-    }
-    delay(1000);
-    sendCommand("AT+CIPCLOSE", 1000, "OK");
-  }
-}
-
-// Send AOD Heartbeat to Cloudflare
-void sendHeartbeat() {
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (sendCommand(startSSL, 5000, "OK")) {
-    String req = "POST /mcu/heartbeat HTTP/1.1\r\n";
-    req += "Host: " + String(CF_HOST) + "\r\n";
-    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
-    req += "Content-Length: 0\r\n";
-    req += "Connection: close\r\n\r\n";
-
-    String sendCmd = "AT+CIPSEND=" + String(req.length());
-    if (sendCommand(sendCmd, 3000, ">")) {
-      espSerial.print(req);
-    }
-    delay(500);
-    sendCommand("AT+CIPCLOSE", 1000, "OK");
-  }
-}
-
-void setup() {
-  Serial.begin(9600);
-  espSerial.begin(9600); // Most ESP-12E shields default to 9600 or 115200
-
-  Serial.println(F("--- Arduino Uno + ESP-12E Shield WOL ---"));
-  
-  // Test communication
-  if (sendCommand("AT", 2000, "OK")) {
-    Serial.println(F("[ESP] AT communication ready."));
-  } else {
-    Serial.println(F("[ESP] Trying 115200 baud..."));
-    espSerial.begin(115200);
-    sendCommand("AT", 2000, "OK");
-  }
-
-  // Set station mode
-  sendCommand("AT+CWMODE=1", 2000, "OK");
-  
-  // Connect to WiFi
-  String joinCmd = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
-  Serial.println(F("[WiFi] Connecting..."));
-  sendCommand(joinCmd, 10000, "OK");
-}
-
-void pollStatus() {
-  Serial.println(F("[Cloudflare] Checking status..."));
-
-  // Connect to Cloudflare Worker via SSL (port 443)
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (!sendCommand(startSSL, 5000, "OK")) {
-    Serial.println(F("[SSL] Connection failed"));
-    return;
-  }
-
-  // Prepare HTTP GET request
-  String req = "GET /status HTTP/1.1\r\n";
-  req += "Host: " + String(CF_HOST) + "\r\n";
-  req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
-  req += "Connection: close\r\n\r\n";
-
-  String sendCmd = "AT+CIPSEND=" + String(req.length());
-  if (sendCommand(sendCmd, 3000, ">")) {
-    espSerial.print(req);
-    
-    // Read response
-    long int timeout = millis() + 5000;
-    String res = "";
-    while (millis() < timeout) {
-      while (espSerial.available()) {
-        res += (char)espSerial.read();
-      }
-      if (res.indexOf("\"trigger\":true") != -1) {
-        Serial.println(F("[TRIGGER] Active Wake-on-LAN trigger detected!"));
-        sendWOLPacket();
-        acknowledgeTrigger();
-        break;
-      }
-    }
-  }
-
-  sendCommand("AT+CIPCLOSE", 1000, "OK");
-}
-
-void acknowledgeTrigger() {
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (sendCommand(startSSL, 5000, "OK")) {
-    String req = "POST /ack HTTP/1.1\r\n";
-    req += "Host: " + String(CF_HOST) + "\r\n";
-    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
-    req += "Content-Length: 0\r\n";
-    req += "Connection: close\r\n\r\n";
-
-    String sendCmd = "AT+CIPSEND=" + String(req.length());
-    if (sendCommand(sendCmd, 3000, ">")) {
-      espSerial.print(req);
-    }
-    delay(1000);
-    sendCommand("AT+CIPCLOSE", 1000, "OK");
-  }
-}
-
+// Send Wake-on-LAN UDP magic packet (102 bytes)
 void sendWOLPacket() {
   Serial.println(F("[WOL] Transmitting Wake-on-LAN UDP Packet..."));
-  // Open UDP connection to broadcast address 255.255.255.255 on port 9
   if (sendCommand("AT+CIPSTART=\"UDP\",\"255.255.255.255\",9", 3000, "OK")) {
-    // 102 byte magic packet: 6x 0xFF + 16x MAC
     byte packet[102];
     memset(packet, 0xFF, 6);
     
@@ -212,17 +101,152 @@ void sendWOLPacket() {
   }
 }
 
-void loop() {
-  if (millis() - lastPoll > POLL_INTERVAL || lastPoll == 0) {
-    lastPoll = millis();
-    sendHeartbeat();
-    pollStatus();
+// Acknowledge trigger completion to Cloudflare
+void acknowledgeTrigger() {
+  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
+  if (sendCommand(startSSL, 5000, "OK")) {
+    String req = "POST /ack HTTP/1.1\r\n";
+    req += "Host: " + String(CF_HOST) + "\r\n";
+    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
+    req += "Content-Type: application/json\r\n";
+    req += "Content-Length: 17\r\n";
+    req += "Connection: close\r\n\r\n";
+    req += "{\"result\":\"SENT\"}";
 
-    // Check every few cycles if server is online
-    static int cycle = 0;
-    if (++cycle % 2 == 0) {
-      bool online = checkServerOnline();
-      reportServerStatus(online);
+    String sendCmd = "AT+CIPSEND=" + String(req.length());
+    if (sendCommand(sendCmd, 3000, ">")) {
+      espSerial.print(req);
+    }
+    delay(500);
+    sendCommand("AT+CIPCLOSE", 1000, "OK");
+  }
+}
+
+// Update Server status on Cloudflare
+void updateServerStatusOnCloudflare(ServerState state) {
+  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
+  if (sendCommand(startSSL, 5000, "OK")) {
+    String statusStr = (state == STATE_ONLINE) ? "ONLINE" : "OFFLINE";
+    String body = "{\"status\":\"" + statusStr + "\"}";
+
+    String req = "POST /server/ping HTTP/1.1\r\n";
+    req += "Host: " + String(CF_HOST) + "\r\n";
+    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
+    req += "Content-Type: application/json\r\n";
+    req += "Content-Length: " + String(body.length()) + "\r\n";
+    req += "Connection: close\r\n\r\n";
+    req += body;
+
+    String sendCmd = "AT+CIPSEND=" + String(req.length());
+    if (sendCommand(sendCmd, 3000, ">")) {
+      espSerial.print(req);
+      Serial.println(F("[Cloudflare] Status updated to: ") + statusStr);
+    }
+    delay(500);
+    sendCommand("AT+CIPCLOSE", 1000, "OK");
+  }
+}
+
+// Check Cloudflare for pending WOL trigger (when server is OFF)
+void checkWOLTrigger() {
+  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
+  if (!sendCommand(startSSL, 5000, "OK")) {
+    return;
+  }
+
+  String req = "GET /status HTTP/1.1\r\n";
+  req += "Host: " + String(CF_HOST) + "\r\n";
+  req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
+  req += "Connection: close\r\n\r\n";
+
+  String sendCmd = "AT+CIPSEND=" + String(req.length());
+  if (sendCommand(sendCmd, 3000, ">")) {
+    espSerial.print(req);
+    
+    long int timeout = millis() + 5000;
+    String res = "";
+    while (millis() < timeout) {
+      while (espSerial.available()) {
+        res += (char)espSerial.read();
+      }
+      if (res.indexOf("\"trigger\":true") != -1) {
+        Serial.println(F("[TRIGGER] Pending Wake-on-LAN trigger detected!"));
+        sendWOLPacket();
+        delay(200);
+        sendWOLPacket(); // Send twice for reliability
+        acknowledgeTrigger();
+        break;
+      }
+    }
+  }
+
+  sendCommand("AT+CIPCLOSE", 1000, "OK");
+}
+
+void sendHeartbeat() {
+  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
+  if (sendCommand(startSSL, 5000, "OK")) {
+    String req = "POST /mcu/heartbeat HTTP/1.1\r\n";
+    req += "Host: " + String(CF_HOST) + "\r\n";
+    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
+    req += "Content-Length: 0\r\n";
+    req += "Connection: close\r\n\r\n";
+
+    String sendCmd = "AT+CIPSEND=" + String(req.length());
+    if (sendCommand(sendCmd, 3000, ">")) {
+      espSerial.print(req);
+    }
+    delay(300);
+    sendCommand("AT+CIPCLOSE", 1000, "OK");
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  espSerial.begin(9600);
+
+  Serial.println(F("\n--- Arduino Uno + ESP-12E Shield Dual-Interval WOL ---"));
+  
+  if (!sendCommand("AT", 2000, "OK")) {
+    espSerial.begin(115200);
+    sendCommand("AT", 2000, "OK");
+  }
+
+  sendCommand("AT+CWMODE=1", 2000, "OK");
+  
+  String joinCmd = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
+  Serial.println(F("[WiFi] Connecting..."));
+  sendCommand(joinCmd, 10000, "OK");
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // --- INTERVAL 1: Poll Local Server Status ---
+  if (now - lastServerCheckTime >= SERVER_CHECK_INTERVAL || lastServerCheckTime == 0) {
+    lastServerCheckTime = now;
+    bool isAlive = probeServer();
+    currentServerState = isAlive ? STATE_ONLINE : STATE_OFFLINE;
+    Serial.print(F("[Server Probe] Status: "));
+    Serial.println(isAlive ? F("ONLINE") : F("OFFLINE"));
+  }
+
+  // --- INTERVAL 2: Cloudflare Synchronization ---
+  if (now - lastCfSyncTime >= CF_SYNC_INTERVAL || lastCfSyncTime == 0) {
+    lastCfSyncTime = now;
+    sendHeartbeat();
+
+    // 1. If server status is different from the last sent status, update Cloudflare
+    if (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN) {
+      Serial.println(F("[Status Change] Updating Cloudflare Worker..."));
+      updateServerStatusOnCloudflare(currentServerState);
+      lastSentServerState = currentServerState;
+    }
+
+    // 2. At the same time, when status is OFF (or on initial boot), check for triggers
+    if (currentServerState == STATE_OFFLINE || currentServerState == STATE_UNKNOWN) {
+      Serial.println(F("[Server is OFF] Checking Cloudflare for WOL triggers..."));
+      checkWOLTrigger();
     }
   }
 }
