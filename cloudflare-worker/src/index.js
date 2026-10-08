@@ -521,7 +521,11 @@ export default {
     const url = new URL(request.url);
     const authHeader = request.headers.get("Authorization");
     const tokenQuery = url.searchParams.get("token");
-    const secret = env.API_KEY || API_KEY;
+
+    // Dual-Token Configuration (Set in Cloudflare Dashboard -> Variables and Secrets)
+    // Supports fallback to legacy API_KEY for backward compatibility
+    const userSecret = env.USER_API_KEY || env.API_KEY || API_KEY;
+    const aodSecret  = env.AOD_DEVICE_KEY || env.API_KEY || API_KEY;
 
     // Web Dashboard UI at GET /
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
@@ -532,18 +536,34 @@ export default {
       });
     }
 
-    // Basic Token Authentication for API endpoints
-    const isAuthorized = authHeader === `Bearer ${secret}` || tokenQuery === secret;
-
-    if (!isAuthorized) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" }
-      });
+    // Extract Bearer token
+    let clientToken = "";
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      clientToken = authHeader.substring(7).trim();
+    } else if (tokenQuery) {
+      clientToken = tokenQuery.trim();
     }
 
-    // Route: POST /auto-on - Configure Automatic Turn On mode
+    const isUser = clientToken && clientToken === userSecret;
+    const isAOD  = clientToken && clientToken === aodSecret;
+
+    // Helper: 401 Unauthorized
+    const unauthorized = (msg = "Unauthorized") => new Response(
+      JSON.stringify({ error: msg }),
+      { status: 401, headers: { "Content-Type": "application/json" } }
+    );
+
+    // Helper: 403 Forbidden
+    const forbidden = (msg = "Forbidden: Insufficient role permissions") => new Response(
+      JSON.stringify({ error: msg }),
+      { status: 403, headers: { "Content-Type": "application/json" } }
+    );
+
+    // Route: POST /auto-on - USER ONLY
     if (request.method === "POST" && url.pathname === "/auto-on") {
+      if (!isUser && !isAOD) return unauthorized();
+      if (!isUser) return forbidden("Only User token can configure auto turn on");
+
       let body = {};
       try { body = await request.json(); } catch(e) {}
       const enable = body.auto_turn_on === true;
@@ -559,8 +579,10 @@ export default {
       );
     }
 
-    // Route: GET /status - Read state
+    // Route: GET /status - Read state (Accessible by both USER and AOD)
     if (request.method === "GET" && url.pathname === "/status") {
+      if (!isUser && !isAOD) return unauthorized();
+
       let pending = await env.WOL_STORE.get("trigger_wol");
       const autoOn = await env.WOL_STORE.get("auto_turn_on") === "true";
       const targetMac = await env.WOL_STORE.get("target_mac") || "";
@@ -588,7 +610,8 @@ export default {
           server_status: serverStatus,      // "ONLINE", "OFFLINE", "BOOTING", "FAILED_TO_TRIGGER"
           server_last_seen: lastSeen,
           last_wol_sent: lastWolSent,
-          aod_alive: aodAlive
+          aod_alive: aodAlive,
+          caller_role: isUser ? "USER" : "AOD_DEVICE"
         }),
         {
           status: 200,
@@ -600,8 +623,11 @@ export default {
       );
     }
 
-    // Route: POST /trigger - Trigger Wake-on-LAN
+    // Route: POST /trigger - USER ONLY
     if (request.method === "POST" && url.pathname === "/trigger") {
+      if (!isUser && !isAOD) return unauthorized();
+      if (!isUser) return forbidden("Only User token can trigger Wake-on-LAN");
+
       let reqData = {};
       try { reqData = await request.json(); } catch (e) {}
 
@@ -637,8 +663,11 @@ export default {
       );
     }
 
-    // Route: POST /ack - Microcontroller acknowledges packet broadcast
+    // Route: POST /ack - AOD DEVICE ONLY
     if (request.method === "POST" && url.pathname === "/ack") {
+      if (!isUser && !isAOD) return unauthorized();
+      if (!isAOD) return forbidden("Only AOD device token can acknowledge triggers");
+
       let body = {};
       try { body = await request.json(); } catch(e) {}
 
@@ -656,8 +685,11 @@ export default {
       );
     }
 
-    // Route: POST /server/ping - Microcontroller LAN health check & AOD Device Liveness
+    // Route: POST /server/ping - AOD DEVICE ONLY
     if (request.method === "POST" && url.pathname === "/server/ping") {
+      if (!isUser && !isAOD) return unauthorized();
+      if (!isAOD) return forbidden("Only AOD device token can report server reachability");
+
       let body = {};
       try { body = await request.json(); } catch(e) {}
 
@@ -676,11 +708,11 @@ export default {
       JSON.stringify({
         endpoints: {
           "GET /": "Web Dashboard UI",
-          "GET /status": "Poll trigger & server state",
-          "POST /auto-on": "Configure Automatic Turn On ({ auto_turn_on: bool })",
-          "POST /trigger": "Arm WOL trigger ({ force: bool, mac: string })",
-          "POST /ack": "Disarm trigger after WOL packet is sent",
-          "POST /server/ping": "Report server online/offline and renew AOD health check"
+          "GET /status": "Poll trigger & server state (User & Device)",
+          "POST /auto-on": "Configure Automatic Turn On (User only)",
+          "POST /trigger": "Arm WOL trigger (User only)",
+          "POST /ack": "Disarm trigger after WOL packet is sent (Device only)",
+          "POST /server/ping": "Report server online/offline and renew AOD health check (Device only)"
         }
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }

@@ -5,9 +5,9 @@
 #define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
 
 // Cloudflare Worker Configuration
-// Example: "https://wol-cloud-trigger.your-subdomain.workers.dev"
+// Example: "https://cf-wake-on-lan.your-subdomain.workers.dev"
 #define CF_WORKER_URL   "https://YOUR_WORKER_SUBDOMAIN.workers.dev"
-#define AUTH_TOKEN      "CHANGE_ME_SECRET_TOKEN"
+#define AUTH_TOKEN      "CHANGE_ME_AOD_DEVICE_KEY" // Matches AOD_DEVICE_KEY in Cloudflare Worker secrets
 
 // Default Target Server MAC Address (Wake-on-LAN target)
 #define DEFAULT_SERVER_MAC {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
