@@ -1,0 +1,13 @@
+# Secrets & Local Config
+config.h
+.env
+*.local
+.wrangler/
+node_modules/
+
+# Build artifacts
+.pio/
+.vscode/
+build/
+*.bin
+*.elf
