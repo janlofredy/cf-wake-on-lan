@@ -51,32 +51,43 @@ Both boards automatically boot and resume polling on power restore (AOD design).
 
 ---
 
-## 🚀 Setup Guide
+## 🚀 Cloudflare Worker Setup (Free Tier)
 
-### 1. Cloudflare Worker Setup (Free Tier)
+You can deploy the Worker directly from this repository using either the **Cloudflare Dashboard (Git Integration)** or the **Wrangler CLI**.
 
-1. Install Wrangler CLI:
+### Option 1: Direct Cloudflare Dashboard (Deploy from Git)
+1. Push this repository to your GitHub/GitLab account.
+2. In the **Cloudflare Dashboard**:
+   - Go to **Workers & Pages** -> **Create application** -> **Workers** -> Select **Connect to Git**.
+   - Select your repository (`cf-wake-on-lan`).
+   - The root [`wrangler.toml`](file:///Users/janlofredy/Documents/ServerStarter/wrangler.toml) will be detected automatically.
+3. In **Settings -> Bindings**:
+   - Add a **KV namespace binding**:
+     - Variable name: `WOL_STORE`
+     - KV namespace: Select or create `WOL_STORE`.
+4. In **Settings -> Variables and Secrets**:
+   - Add Secret: `API_KEY` (set your secret authorization token).
+5. Click **Save and Deploy**. Cloudflare will automatically build and deploy every time you push changes!
+
+---
+
+### Option 2: Deploy via CLI (Wrangler)
+1. Log in to Cloudflare:
    ```bash
-   npm install -g wrangler
+   npx wrangler login
    ```
-2. Log in to Cloudflare:
+2. Create the free KV namespace:
    ```bash
-   wrangler login
+   npx wrangler kv namespace create WOL_STORE
    ```
-3. Create a free KV namespace:
+3. Copy the generated `id` and paste it into [`wrangler.toml`](file:///Users/janlofredy/Documents/ServerStarter/wrangler.toml).
+4. Set your secret token:
    ```bash
-   cd cloudflare-worker
-   wrangler kv namespace create WOL_STORE
+   npx wrangler secret put API_KEY
    ```
-4. Copy the returned `id` and paste it inside [cloudflare-worker/wrangler.toml](file:///Users/janlofredy/Documents/ServerStarter/cloudflare-worker/wrangler.toml).
-5. Deploy the worker:
+5. Deploy:
    ```bash
-   wrangler deploy
-   ```
-6. Set your secret authentication token:
-   ```bash
-   wrangler secret put API_KEY
-   # Enter your preferred secret token (e.g. MySecretToken123)
+   npm run deploy
    ```
 
 ---
