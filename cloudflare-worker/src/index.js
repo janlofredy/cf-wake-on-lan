@@ -113,7 +113,7 @@ function renderDashboardHTML(authToken) {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 0.75rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
     }
 
     .stat-box {
@@ -136,6 +136,72 @@ function renderDashboardHTML(authToken) {
       font-size: 0.85rem;
       font-weight: 600;
       color: var(--text);
+    }
+
+    .switch-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .switch-info h4 {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .switch-info p {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      margin-top: 0.15rem;
+    }
+
+    /* Toggle switch styling */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: rgba(255, 255, 255, 0.15);
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 24px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: var(--accent);
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+    input:checked + .slider:before {
+      transform: translateX(20px);
+      background-color: #0b0f19;
     }
 
     .token-input-group {
@@ -257,6 +323,18 @@ function renderDashboardHTML(authToken) {
         </div>
       </div>
 
+      <!-- Automatic Turn On Toggle -->
+      <div class="switch-card">
+        <div class="switch-info">
+          <h4><span>🔄</span> Automatic Turn On</h4>
+          <p>Always boot server whenever it is detected offline</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="autoOnToggle" onchange="toggleAutoOn(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+
       <div class="token-input-group">
         <label for="tokenInput">Access Secret Token</label>
         <input type="password" id="tokenInput" class="token-input" placeholder="Enter API_KEY" value="${authToken}">
@@ -283,6 +361,7 @@ function renderDashboardHTML(authToken) {
     const lastSeen = document.getElementById('lastSeen');
     const alertBox = document.getElementById('alertBox');
     const triggerBtn = document.getElementById('triggerBtn');
+    const autoOnToggle = document.getElementById('autoOnToggle');
 
     // Save token locally for convenience
     if (!tokenInput.value && localStorage.getItem('cf_wol_token')) {
@@ -300,6 +379,36 @@ function renderDashboardHTML(authToken) {
 
     function getToken() {
       return tokenInput.value.trim();
+    }
+
+    async function toggleAutoOn(enabled) {
+      const token = getToken();
+      if (!token) {
+        showAlert('Please provide your Secret Token.', 'error');
+        autoOnToggle.checked = !enabled;
+        return;
+      }
+
+      try {
+        const res = await fetch('/auto-on', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ auto_turn_on: enabled })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showAlert(data.message, 'success');
+        } else {
+          showAlert(data.message || 'Failed to update auto-on mode', 'error');
+          autoOnToggle.checked = !enabled;
+        }
+      } catch (e) {
+        showAlert('Network error updating auto-on mode', 'error');
+        autoOnToggle.checked = !enabled;
+      }
     }
 
     async function fetchStatus() {
@@ -321,6 +430,11 @@ function renderDashboardHTML(authToken) {
 
         const data = await res.json();
 
+        // Update Auto Turn On switch state
+        if (typeof data.auto_turn_on !== 'undefined' && document.activeElement !== autoOnToggle) {
+          autoOnToggle.checked = data.auto_turn_on;
+        }
+
         // Update Server Status Badge
         statusBadge.className = 'badge';
         if (data.server_status === 'ONLINE') {
@@ -340,7 +454,7 @@ function renderDashboardHTML(authToken) {
           triggerBtn.innerHTML = '<span>🚀</span> Start Server (WOL)';
         }
 
-        // AOD Device health (derived directly from /server/ping liveness)
+        // AOD Device health
         if (data.aod_alive) {
           aodStatus.textContent = "CONNECTED";
           aodStatus.style.color = "var(--success)";
@@ -428,22 +542,48 @@ export default {
       });
     }
 
+    // Route: POST /auto-on - Configure Automatic Turn On mode
+    if (request.method === "POST" && url.pathname === "/auto-on") {
+      let body = {};
+      try { body = await request.json(); } catch(e) {}
+      const enable = body.auto_turn_on === true;
+      await env.WOL_STORE.put("auto_turn_on", enable ? "true" : "false");
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          auto_turn_on: enable,
+          message: enable ? "Automatic Turn On ENABLED (Server will auto-boot when offline)" : "Automatic Turn On DISABLED"
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     // Route: GET /status - Read state
-    // AOD Device liveness is measured directly from the last /server/ping timestamp!
     if (request.method === "GET" && url.pathname === "/status") {
-      const pending = await env.WOL_STORE.get("trigger_wol");
+      let pending = await env.WOL_STORE.get("trigger_wol");
+      const autoOn = await env.WOL_STORE.get("auto_turn_on") === "true";
       const targetMac = await env.WOL_STORE.get("target_mac") || "";
       const serverStatus = await env.WOL_STORE.get("server_status") || "UNKNOWN";
       const lastSeen = await env.WOL_STORE.get("server_last_seen") || null;
       const lastWolSent = await env.WOL_STORE.get("last_wol_sent") || null;
       const lastPingEpoch = await env.WOL_STORE.get("aod_last_ping_epoch") || 0;
 
-      // If AOD device sent a /server/ping in the last 2 minutes, it is alive & operating
+      // AUTOMATIC TURN ON LOGIC:
+      // If Auto Turn On is enabled and the server is OFFLINE, automatically arm trigger!
+      let shouldTrigger = (pending === "true" || pending === "1");
+      if (autoOn && serverStatus === "OFFLINE" && !shouldTrigger) {
+        shouldTrigger = true;
+        await env.WOL_STORE.put("trigger_wol", "true");
+        await env.WOL_STORE.put("server_status", "BOOTING");
+      }
+
       const aodAlive = (Date.now() - Number(lastPingEpoch)) < 120000;
 
       return new Response(
         JSON.stringify({
-          trigger: pending === "true" || pending === "1",
+          trigger: shouldTrigger,
+          auto_turn_on: autoOn,
           mac: targetMac,
           server_status: serverStatus,      // "ONLINE", "OFFLINE", "BOOTING", "FAILED_TO_TRIGGER"
           server_last_seen: lastSeen,
@@ -537,6 +677,7 @@ export default {
         endpoints: {
           "GET /": "Web Dashboard UI",
           "GET /status": "Poll trigger & server state",
+          "POST /auto-on": "Configure Automatic Turn On ({ auto_turn_on: bool })",
           "POST /trigger": "Arm WOL trigger ({ force: bool, mac: string })",
           "POST /ack": "Disarm trigger after WOL packet is sent",
           "POST /server/ping": "Report server online/offline and renew AOD health check"
