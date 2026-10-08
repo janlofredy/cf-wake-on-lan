@@ -10,12 +10,18 @@
 #define AUTH_TOKEN      "CHANGE_ME_SECRET_TOKEN"
 
 // Default Target Server MAC Address (Wake-on-LAN target)
-// Format: 6 bytes
 #define DEFAULT_SERVER_MAC {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
 
-// Polling interval in milliseconds
-// 30,000 ms = 30s (2,880 requests/day, well under Cloudflare KV free limit of 100k/day)
-#define POLL_INTERVAL_MS 30000
+// Target Server Local IP and Port for reachability checking (e.g. SSH 22, HTTP 80, RDP 3389)
+#define SERVER_IP       "192.168.1.100"
+#define SERVER_PORT     22
 
 // WOL Broadcast Port (typically 9 or 7)
-#define WOL_PORT 9
+#define WOL_PORT        9
+
+// --- Timing Configuration (ms) ---
+// 1. How often to poll the local server status (LAN TCP check)
+#define SERVER_CHECK_INTERVAL_MS  5000    // e.g. every 5 seconds locally
+
+// 2. How often to synchronize status with Cloudflare Worker and check for triggers if OFF
+#define CF_SYNC_INTERVAL_MS       20000   // e.g. every 20 seconds (fits well within free tier)

@@ -3,21 +3,27 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-// Copy ../config.h.example to config.h and fill in your details
 #if __has_include("config.h")
   #include "config.h"
 #else
   #include "../config.h.example"
 #endif
 
-// Status LED (GPIO 2 is built-in LED on most ESP32 Dev Boards)
 #define LED_PIN 2
 
 WiFiUDP udp;
-unsigned long lastPollTime = 0;
 byte defaultMac[6] = DEFAULT_SERVER_MAC;
 
-// Parse MAC address string (e.g. "AA:BB:CC:DD:EE:FF" or "AA-BB-CC-DD-EE-FF")
+// State Memory
+enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
+ServerState currentServerState  = STATE_UNKNOWN;
+ServerState lastSentServerState = STATE_UNKNOWN;
+
+// Timers (Two separate polling intervals)
+unsigned long lastServerCheckTime = 0;
+unsigned long lastCfSyncTime      = 0;
+
+// Parse MAC address
 bool parseMac(const char* macStr, byte* macBytes) {
   int values[6];
   if (6 == sscanf(macStr, "%x:%x:%x:%x:%x:%x",
@@ -34,7 +40,7 @@ bool parseMac(const char* macStr, byte* macBytes) {
   return false;
 }
 
-// Send Wake-on-LAN Magic Packet (6x 0xFF followed by 16x Target MAC)
+// Send Wake-on-LAN Magic Packet
 void sendWOL(const byte* macAddress) {
   byte magicPacket[102];
   memset(magicPacket, 0xFF, 6);
@@ -42,7 +48,6 @@ void sendWOL(const byte* macAddress) {
     memcpy(&magicPacket[i * 6], macAddress, 6);
   }
 
-  // Broadcast address 255.255.255.255 on WOL port (typically 9)
   IPAddress broadcastIp(255, 255, 255, 255);
   udp.beginPacket(broadcastIp, WOL_PORT);
   udp.write(magicPacket, sizeof(magicPacket));
@@ -71,8 +76,35 @@ void connectWiFi() {
     Serial.println("\n[WiFi] Connected! IP: " + WiFi.localIP().toString());
   } else {
     digitalWrite(LED_PIN, LOW);
-    Serial.println("\n[WiFi] Failed to connect. Will retry.");
+    Serial.println("\n[WiFi] Failed to connect.");
   }
+}
+
+// Probe local server reachability using TCP socket
+bool probeServer() {
+  WiFiClient client;
+  client.setTimeout(1); // 1-second timeout
+  if (client.connect(SERVER_IP, SERVER_PORT)) {
+    client.stop();
+    return true;
+  }
+  return false;
+}
+
+// Update server status on Cloudflare Worker
+void updateServerStatusOnCloudflare(ServerState state) {
+  HTTPClient http;
+  String url = String(CF_WORKER_URL) + "/server/ping";
+  http.begin(url);
+  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+  http.addHeader("Content-Type", "application/json");
+
+  String body = (state == STATE_ONLINE) ? "{\"status\":\"ONLINE\"}" : "{\"status\":\"OFFLINE\"}";
+  int httpCode = http.POST(body);
+  if (httpCode == HTTP_CODE_OK) {
+    Serial.printf("[Cloudflare] Server status updated to: %s\n", (state == STATE_ONLINE) ? "ONLINE" : "OFFLINE");
+  }
+  http.end();
 }
 
 // Acknowledge trigger completion to Cloudflare
@@ -83,22 +115,22 @@ void acknowledgeTrigger() {
   http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
   http.addHeader("Content-Type", "application/json");
 
-  int httpCode = http.POST("{}");
-  if (httpCode == HTTP_CODE_OK) {
-    Serial.println("[Cloudflare] Trigger acknowledged and disarmed.");
-  } else {
-    Serial.printf("[Cloudflare] Ack failed, code: %d\n", httpCode);
-  }
+  http.POST("{\"result\":\"SENT\"}");
+  http.end();
+}
+
+// Send MCU heartbeat
+void sendHeartbeat() {
+  HTTPClient http;
+  String url = String(CF_WORKER_URL) + "/mcu/heartbeat";
+  http.begin(url);
+  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+  http.POST("{}");
   http.end();
 }
 
 // Check Cloudflare Worker for WOL trigger
-void pollCloudflare() {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
-    return;
-  }
-
+void checkWOLTrigger() {
   HTTPClient http;
   String url = String(CF_WORKER_URL) + "/status";
   http.begin(url);
@@ -116,30 +148,18 @@ void pollCloudflare() {
       const char* customMac = doc["mac"];
 
       if (shouldTrigger) {
-        Serial.println("[Trigger] Pending Wake-on-LAN trigger detected!");
-        
+        Serial.println("[Trigger] Active Wake-on-LAN trigger detected!");
         byte targetMac[6];
         if (customMac && strlen(customMac) > 0 && parseMac(customMac, targetMac)) {
-          Serial.printf("[WOL] Using custom MAC: %s\n", customMac);
           sendWOL(targetMac);
         } else {
-          Serial.println("[WOL] Using default MAC configured in config.h");
           sendWOL(defaultMac);
         }
-
-        // Send multiple magic packets to ensure receipt
         delay(200);
-        sendWOL(defaultMac);
-
-        // Acknowledge to prevent duplicate triggers
+        sendWOL(defaultMac); // Send twice for reliability
         acknowledgeTrigger();
       }
-    } else {
-      Serial.print("[JSON] Deserialization error: ");
-      Serial.println(error.c_str());
     }
-  } else {
-    Serial.printf("[HTTP] Poll failed with HTTP code: %d\n", httpCode);
   }
   http.end();
 }
@@ -148,23 +168,45 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n--- ESP32 Cloudflare Wake-on-LAN Controller ---");
+  Serial.println("\n--- ESP32 Dual-Interval Wake-on-LAN Controller ---");
 
   connectWiFi();
 }
 
 void loop() {
-  // Always on Device loop: poll periodically
-  unsigned long now = millis();
-  if (now - lastPollTime >= POLL_INTERVAL_MS || lastPollTime == 0) {
-    lastPollTime = now;
-    pollCloudflare();
-  }
-
-  // Ensure WiFi stays connected
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
+    return;
   }
 
-  delay(100);
+  unsigned long now = millis();
+
+  // --- INTERVAL 1: Poll Local Server Status ---
+  if (now - lastServerCheckTime >= SERVER_CHECK_INTERVAL_MS || lastServerCheckTime == 0) {
+    lastServerCheckTime = now;
+    bool isAlive = probeServer();
+    currentServerState = isAlive ? STATE_ONLINE : STATE_OFFLINE;
+    Serial.printf("[Server Probe] %s\n", isAlive ? "ONLINE" : "OFFLINE");
+  }
+
+  // --- INTERVAL 2: Cloudflare Synchronization ---
+  if (now - lastCfSyncTime >= CF_SYNC_INTERVAL_MS || lastCfSyncTime == 0) {
+    lastCfSyncTime = now;
+    sendHeartbeat();
+
+    // 1. If status changed from last sent status, update Cloudflare
+    if (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN) {
+      Serial.println("[Status Change] Updating Cloudflare...");
+      updateServerStatusOnCloudflare(currentServerState);
+      lastSentServerState = currentServerState;
+    }
+
+    // 2. When server is OFF (or initial state), check if there is a trigger
+    if (currentServerState == STATE_OFFLINE || currentServerState == STATE_UNKNOWN) {
+      Serial.println("[Server is OFF] Checking Cloudflare for pending triggers...");
+      checkWOLTrigger();
+    }
+  }
+
+  delay(50);
 }

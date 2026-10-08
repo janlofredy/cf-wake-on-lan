@@ -8,26 +8,43 @@ An Always-On Device (AOD) Wake-on-LAN (WOL) remote server starter powered by **C
 
 ---
 
-## ⚡ How It Works
+## ⚡ Smart Polling & Trigger Flow
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as You (Phone / Terminal / Web)
-    participant CF as Cloudflare Worker + KV
-    participant MCU as ESP32 / Arduino AOD
-    participant Target as Target Server
+    participant Server as Target Server (LAN)
+    participant MCU as Arduino Uno / ESP32
+    participant CF as Cloudflare Worker (KV)
+    actor User as You / Remote Trigger
 
-    User->>CF: POST /trigger (arms state in KV)
-    Note over MCU,CF: Polls every 30-60s (Free tier: 100k reads/day)
-    MCU->>CF: GET /status
-    CF-->>MCU: { "trigger": true, "mac": "..." }
-    MCU->>Target: Broadcast UDP Magic Packet (Port 9 / 255.255.255.255)
-    Note over Target: Server powers on via WOL
-    MCU->>CF: POST /ack (disarms trigger)
+    loop Local Server Probe (e.g. Every 5s)
+        MCU->>Server: LAN Port Probe (TCP)
+        Note over MCU: Updates currentServerState (ONLINE / OFFLINE)
+    end
+
+    loop Cloudflare Sync Interval (e.g. Every 20s)
+        alt Server State Changed (current != lastSent)
+            MCU->>CF: POST /server/ping { status: ONLINE / OFFLINE }
+            Note over MCU: lastSentServerState = currentServerState
+        end
+
+        alt Server is OFFLINE
+            MCU->>CF: GET /status (Check if WOL is triggered)
+            opt Trigger is true
+                MCU->>Server: Broadcast UDP Magic Packet (Port 9)
+                MCU->>CF: POST /ack (Disarm trigger)
+            end
+        else Server is ONLINE
+            Note over MCU,CF: Trigger checking skipped (Server is already ON)
+        end
+    end
 ```
 
-Both boards automatically boot and resume polling on power restore (AOD design).
+### 🧠 Flow Benefits:
+1. **Separated Intervals**: Local LAN server probe runs fast (e.g., every 5s) without consuming internet bandwidth or Cloudflare quotas.
+2. **State Memory (`current` vs `lastSent`)**: Cloudflare is only notified when the status actually changes, minimizing HTTP calls.
+3. **Conditional Wake Checking**: When the server is already `ONLINE`, the board avoids unnecessary trigger processing. As soon as the server is `OFFLINE`, it monitors for WOL triggers on every sync cycle.
 
 ---
 
