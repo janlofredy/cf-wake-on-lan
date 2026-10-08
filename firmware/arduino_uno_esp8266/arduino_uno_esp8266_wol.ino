@@ -28,7 +28,7 @@ SoftwareSerial espSerial(2, 3); // RX, TX
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.workers.dev";
-const char* AUTH_TOKEN    = "CHANGE_ME_SECRET_TOKEN";
+const char* AUTH_TOKEN    = "CHANGE_ME_AOD_DEVICE_KEY"; // Set to match AOD_DEVICE_KEY in Cloudflare Worker
 
 // Server Configuration
 const char* SERVER_MAC    = "AA:BB:CC:DD:EE:FF";
