@@ -1,0 +1,9 @@
+name = "cf-wake-on-lan"
+main = "cloudflare-worker/src/index.js"
+compatibility_date = "2024-01-01"
+
+# Automatically create or bind KV Namespace for storage
+# In Cloudflare Dashboard Git integration, this binding will link to your KV namespace
+[[kv_namespaces]]
+binding = "WOL_STORE"
+id = "WOL_STORE_ID"
