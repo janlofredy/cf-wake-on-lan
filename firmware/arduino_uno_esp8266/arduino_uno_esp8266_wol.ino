@@ -28,6 +28,10 @@ const char* AUTH_TOKEN    = "CHANGE_ME_SECRET_TOKEN";
 // Server MAC to wake
 const char* SERVER_MAC = "AA:BB:CC:DD:EE:FF";
 
+// Optional: Target Server IP and Port for reachability check (e.g. Port 22 SSH or 80 HTTP or 3389 RDP)
+const char* SERVER_IP     = "192.168.1.100";
+const int   SERVER_PORT   = 22;
+
 unsigned long lastPoll = 0;
 const unsigned long POLL_INTERVAL = 30000; // 30 seconds
 
@@ -46,6 +50,58 @@ bool sendCommand(String cmd, unsigned long timeout, String expectedResponse) {
     }
   }
   return false;
+}
+
+// Check if target server port is responding on LAN
+bool checkServerOnline() {
+  String pingCmd = "AT+CIPSTART=\"TCP\",\"" + String(SERVER_IP) + "\"," + String(SERVER_PORT);
+  if (sendCommand(pingCmd, 2000, "CONNECT") || sendCommand(pingCmd, 1000, "OK")) {
+    sendCommand("AT+CIPCLOSE", 1000, "OK");
+    return true;
+  }
+  sendCommand("AT+CIPCLOSE", 500, "OK");
+  return false;
+}
+
+// Report server status to Cloudflare
+void reportServerStatus(bool isOnline) {
+  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
+  if (sendCommand(startSSL, 5000, "OK")) {
+    String body = "{\"status\":\"" + String(isOnline ? "ONLINE" : "OFFLINE") + "\"}";
+    String req = "POST /server/ping HTTP/1.1\r\n";
+    req += "Host: " + String(CF_HOST) + "\r\n";
+    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
+    req += "Content-Type: application/json\r\n";
+    req += "Content-Length: " + String(body.length()) + "\r\n";
+    req += "Connection: close\r\n\r\n";
+    req += body;
+
+    String sendCmd = "AT+CIPSEND=" + String(req.length());
+    if (sendCommand(sendCmd, 3000, ">")) {
+      espSerial.print(req);
+    }
+    delay(1000);
+    sendCommand("AT+CIPCLOSE", 1000, "OK");
+  }
+}
+
+// Send AOD Heartbeat to Cloudflare
+void sendHeartbeat() {
+  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
+  if (sendCommand(startSSL, 5000, "OK")) {
+    String req = "POST /mcu/heartbeat HTTP/1.1\r\n";
+    req += "Host: " + String(CF_HOST) + "\r\n";
+    req += "Authorization: Bearer " + String(AUTH_TOKEN) + "\r\n";
+    req += "Content-Length: 0\r\n";
+    req += "Connection: close\r\n\r\n";
+
+    String sendCmd = "AT+CIPSEND=" + String(req.length());
+    if (sendCommand(sendCmd, 3000, ">")) {
+      espSerial.print(req);
+    }
+    delay(500);
+    sendCommand("AT+CIPCLOSE", 1000, "OK");
+  }
 }
 
 void setup() {
@@ -159,6 +215,14 @@ void sendWOLPacket() {
 void loop() {
   if (millis() - lastPoll > POLL_INTERVAL || lastPoll == 0) {
     lastPoll = millis();
+    sendHeartbeat();
     pollStatus();
+
+    // Check every few cycles if server is online
+    static int cycle = 0;
+    if (++cycle % 2 == 0) {
+      bool online = checkServerOnline();
+      reportServerStatus(online);
+    }
   }
 }
