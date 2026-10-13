@@ -21,13 +21,14 @@
  *   - Press ESP-RST button to start running
  * ============================================================================
  */
-
-#if __has_include("../arduino_uno_esp8266_wol/config.h")
-  #include "../arduino_uno_esp8266_wol/config.h"
-#elif __has_include("config.h")
-  #include "config.h"
+#if defined(__has_include)
+  #if __has_include("config.h")
+    #include "config.h"
+  #else
+    #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
+  #endif
 #else
-  #error "Missing config.h! Please provide your network & Cloudflare credentials."
+  #include "config.h"
 #endif
 
 // Onboard LED on ESP-12 is usually GPIO 2 (active LOW)
