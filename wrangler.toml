@@ -1,6 +1,7 @@
 name = "cf-wake-on-lan"
 main = "cloudflare-worker/src/index.js"
 compatibility_date = "2024-01-01"
+workers_dev = true
 
 [[kv_namespaces]]
 binding = "WOL_STORE"

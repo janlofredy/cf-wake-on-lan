@@ -27,14 +27,14 @@ SoftwareSerial espSerial(2, 3); // RX, TX
 // WiFi & Cloudflare Configuration
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.example.com";
+const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.workers.dev";
 const char* AUTH_TOKEN    = "CHANGE_ME_AOD_DEVICE_KEY"; // Set to match AOD_DEVICE_KEY in Cloudflare Worker
 
 // Server Configuration
 const char* SERVER_MAC    = "00:11:22:33:44:55"; // SECONDARY PC
 // const char* SERVER_MAC    = "00:11:22:33:44:55"; // SERVER
 const char* SERVER_IP     = "192.168.1.100"; // SECONDARY PC
-const char* SERVER_IP     = "192.168.1.100"; // SERVER
+// const char* SERVER_IP     = "192.168.1.100"; // SERVER
 const int   SERVER_PORT   = 22;
 
 // Timers (Two separate polling intervals)
