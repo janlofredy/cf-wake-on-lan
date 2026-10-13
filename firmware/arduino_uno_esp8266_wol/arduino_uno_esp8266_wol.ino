@@ -1,6 +1,6 @@
 /**
  * Arduino Uno R3 + WangTongze ESP8266 ESP-12E WiFi Shield
- * NO JUMPER CABLES NEEDED! (Direct Hardware Serial via Pins D0 & D1)
+ * Direct Hardware Serial via Pins D0 & D1 (No Jumper Cables Required!)
  *
  * DIP SWITCH GUIDE:
  * - WHEN UPLOADING CODE VIA USB:
@@ -9,10 +9,10 @@
  *     Switch 3: OFF (NOR mode)
  *     Switch 4: OFF
  *
- * - WHEN RUNNING AS ALWAYS-ON DEVICE (AOD):
+ * - WHEN RUNNING (AOD or ANY TEST MODE):
  *     Switch 1: ON  (P1 TTLSW: routes ESP TX to Uno D0)
  *     Switch 2: ON  (P2 TTLSW: routes ESP RX to Uno D1)
- *     Switch 3: OFF (P3 DFU/NOR: must be OFF for normal operation!)
+ *     Switch 3: OFF (P3 DFU/NOR: MUST be OFF for normal operation!)
  *     Switch 4: OFF
  */
 
@@ -22,10 +22,7 @@
   #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
 #endif
 
-// Built-in LED on Arduino Uno (Pin 13) for visual status
 #define LED_PIN 13
-
-// Use Uno's Hardware Serial (Pins 0 & 1)
 #define espSerial Serial
 
 // State Memory
@@ -62,7 +59,7 @@ bool sendCommand(String cmd, unsigned long timeout, String expectedResponse) {
   return false;
 }
 
-// Check local LAN reachability of the target server
+// Check local LAN reachability of target server
 bool probeServer() {
   String pingCmd = "AT+CIPSTART=\"TCP\",\"" + String(SERVER_IP) + "\"," + String(SERVER_PORT);
   if (sendCommand(pingCmd, 2000, "CONNECT") || sendCommand(pingCmd, 1000, "OK")) {
@@ -92,8 +89,7 @@ void sendWOLPacket() {
       for (int i = 0; i < 102; i++) {
         espSerial.write(packet[i]);
       }
-      // Rapid visual blink on Pin 13 indicates WOL packet sent!
-      blinkLed(5, 50);
+      blinkLed(5, 50); // 5 fast blinks indicate WOL broadcast
     }
     sendCommand("AT+CIPCLOSE", 1000, "OK");
   }
@@ -138,7 +134,6 @@ void updateServerStatusOnCloudflare(ServerState state) {
     String sendCmd = "AT+CIPSEND=" + String(req.length());
     if (sendCommand(sendCmd, 3000, ">")) {
       espSerial.print(req);
-      // Solid pulse indicates status sync
       digitalWrite(LED_PIN, HIGH);
       delay(200);
       digitalWrite(LED_PIN, LOW);
@@ -173,7 +168,7 @@ void checkWOLTrigger() {
       if (res.indexOf("\"trigger\":true") != -1) {
         sendWOLPacket();
         delay(250);
-        sendWOLPacket(); // Send twice for reliability
+        sendWOLPacket();
         acknowledgeTrigger();
         break;
       }
@@ -183,33 +178,115 @@ void checkWOLTrigger() {
   sendCommand("AT+CIPCLOSE", 1000, "OK");
 }
 
-void setup() {
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-
-  // Initialize hardware serial
+void initESP() {
   espSerial.begin(115200);
   delay(1000);
-
-  // Test AT communication (WangTongze ESP-12E default baud is 115200)
   if (!sendCommand("AT", 1000, "OK")) {
     espSerial.begin(9600);
     delay(500);
     sendCommand("AT", 1000, "OK");
   }
+}
 
-  // Set Station mode
-  sendCommand("AT+CWMODE=1", 1000, "OK");
+// ==========================================
+// TEST IMPLEMENTATIONS
+// ==========================================
+void runTestAT() {
+  // Try 115200 baud
+  espSerial.begin(115200);
+  delay(500);
+  while (espSerial.available()) espSerial.read();
   
-  // Connect to 2.4 GHz Wi-Fi
+  if (sendCommand("AT", 1500, "OK")) {
+    while (true) blinkLed(1, 100); // Fast rapid blink = SUCCESS
+  }
+
+  // Fallback to 9600 baud
+  espSerial.begin(9600);
+  delay(500);
+  while (espSerial.available()) espSerial.read();
+  if (sendCommand("AT", 1500, "OK")) {
+    while (true) blinkLed(1, 100); // Fast rapid blink = SUCCESS
+  }
+
+  // FAILED: Solid ON
+  digitalWrite(LED_PIN, HIGH);
+}
+
+void runTestWiFi() {
+  initESP();
+  sendCommand("AT+CWMODE=1", 1000, "OK");
+  String join = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
+  if (sendCommand(join, 12000, "OK")) {
+    blinkLed(5, 400); // 5 slow blinks = SUCCESS!
+  } else {
+    digitalWrite(LED_PIN, HIGH); // Solid ON = FAILED
+  }
+}
+
+void runTestWOL() {
+  initESP();
+  sendCommand("AT+CWMODE=1", 1000, "OK");
+  String join = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
+  sendCommand(join, 10000, "OK");
+
+  for (int i = 0; i < 3; i++) {
+    sendWOLPacket();
+    delay(500);
+  }
+  blinkLed(10, 150); // 10 pulses = Dispatched
+}
+
+void runTestCF() {
+  initESP();
+  sendCommand("AT+CWMODE=1", 1000, "OK");
+  String join = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
+  sendCommand(join, 10000, "OK");
+
+  // Ping Cloudflare
+  updateServerStatusOnCloudflare(STATE_ONLINE);
+
+  while (true) {
+    blinkLed(3, 100);
+    delay(800);
+  }
+}
+
+// ==========================================
+// ARDUINO SETUP & LOOP
+// ==========================================
+void setup() {
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+  delay(1500);
+
+#if RUN_MODE == MODE_TEST_AT
+  runTestAT();
+  return;
+#elif RUN_MODE == MODE_TEST_WIFI
+  runTestWiFi();
+  return;
+#elif RUN_MODE == MODE_TEST_WOL
+  runTestWOL();
+  return;
+#elif RUN_MODE == MODE_TEST_CF
+  runTestCF();
+  return;
+#endif
+
+  // --- NORMAL OPERATION ---
+  initESP();
+  sendCommand("AT+CWMODE=1", 1000, "OK");
   String joinCmd = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
   sendCommand(joinCmd, 8000, "OK");
-
-  // Indicate setup complete with 3 slow blinks on Uno Pin 13
-  blinkLed(3, 200);
+  blinkLed(3, 200); // 3 blinks = Normal Boot Ready
 }
 
 void loop() {
+#if RUN_MODE != MODE_NORMAL
+  return; // Tests halt here
+#endif
+
   unsigned long now = millis();
 
   // --- INTERVAL 1: Poll Local Server Status ---
@@ -223,7 +300,6 @@ void loop() {
   if (now - lastCfSyncTime >= CF_SYNC_INTERVAL_MS || lastCfSyncTime == 0) {
     lastCfSyncTime = now;
 
-    // 1. Update Cloudflare whenever status changes, or periodically (every ~60s)
     static unsigned long lastSentTime = 0;
     bool statusChanged = (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN);
     bool periodicRefresh = (now - lastSentTime >= 60000 || lastSentTime == 0);
@@ -234,7 +310,6 @@ void loop() {
       lastSentTime = now;
     }
 
-    // 2. When server is OFF (or initial state), check for pending triggers
     if (currentServerState == STATE_OFFLINE || currentServerState == STATE_UNKNOWN) {
       checkWOLTrigger();
     }
