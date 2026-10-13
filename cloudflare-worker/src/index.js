@@ -1,16 +1,18 @@
 /**
  * Cloudflare Worker for Wake-on-LAN Trigger & Dashboard UI
+ * - Web UI protected by Cloudflare Access (No manual token needed in UI!)
+ * - Device routes (/server/ping, /ack, /status) authenticated via AOD_DEVICE_KEY
  */
 
-const API_KEY = "CHANGE_ME_SECRET_TOKEN"; // Set as a secret via wrangler secret put API_KEY
+const API_KEY = "CHANGE_ME_SECRET_TOKEN";
 
-function renderDashboardHTML(authToken) {
+function renderDashboardHTML() {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cf-wake-on-lan Controller</title>
+  <title>Server Controller - YOUR_WORKER_SUBDOMAIN.workers.dev</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -146,7 +148,7 @@ function renderDashboardHTML(authToken) {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 1.25rem;
+      margin-bottom: 1.5rem;
     }
 
     .switch-info h4 {
@@ -164,18 +166,13 @@ function renderDashboardHTML(authToken) {
       margin-top: 0.15rem;
     }
 
-    /* Toggle switch styling */
     .switch {
       position: relative;
       display: inline-block;
       width: 44px;
       height: 24px;
     }
-    .switch input {
-      opacity: 0;
-      width: 0;
-      height: 0;
-    }
+    .switch input { opacity: 0; width: 0; height: 0; }
     .slider {
       position: absolute;
       cursor: pointer;
@@ -202,33 +199,6 @@ function renderDashboardHTML(authToken) {
     input:checked + .slider:before {
       transform: translateX(20px);
       background-color: #0b0f19;
-    }
-
-    .token-input-group {
-      margin-bottom: 1.25rem;
-    }
-
-    .token-input-group label {
-      display: block;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-bottom: 0.35rem;
-    }
-
-    .token-input {
-      width: 100%;
-      background: rgba(0, 0, 0, 0.25);
-      border: 1px solid var(--card-border);
-      border-radius: 10px;
-      color: var(--text);
-      font-family: var(--font-mono);
-      font-size: 0.85rem;
-      padding: 0.65rem 0.85rem;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    .token-input:focus {
-      border-color: var(--accent);
     }
 
     .btn-group {
@@ -297,6 +267,16 @@ function renderDashboardHTML(authToken) {
     .notification.success { background: var(--success-bg); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
     .notification.error { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
     .notification.warning { background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+
+    .cf-access-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 1.25rem;
+    }
   </style>
 </head>
 <body>
@@ -335,11 +315,6 @@ function renderDashboardHTML(authToken) {
         </label>
       </div>
 
-      <div class="token-input-group">
-        <label for="tokenInput">Access Secret Token</label>
-        <input type="password" id="tokenInput" class="token-input" placeholder="Enter API_KEY" value="${authToken}">
-      </div>
-
       <div class="btn-group">
         <button id="triggerBtn" class="btn btn-primary" onclick="triggerWOL(false)">
           <span>🚀</span> Start Server (WOL)
@@ -350,11 +325,14 @@ function renderDashboardHTML(authToken) {
       </div>
 
       <div id="alertBox" class="notification"></div>
+
+      <div class="cf-access-badge">
+        <span>🔒 Protected by Cloudflare Access</span>
+      </div>
     </div>
   </div>
 
   <script>
-    const tokenInput = document.getElementById('tokenInput');
     const statusBadge = document.getElementById('statusBadge');
     const badgeText = document.getElementById('badgeText');
     const aodStatus = document.getElementById('aodStatus');
@@ -363,39 +341,17 @@ function renderDashboardHTML(authToken) {
     const triggerBtn = document.getElementById('triggerBtn');
     const autoOnToggle = document.getElementById('autoOnToggle');
 
-    // Save token locally for convenience
-    if (!tokenInput.value && localStorage.getItem('cf_wol_token')) {
-      tokenInput.value = localStorage.getItem('cf_wol_token');
-    }
-    tokenInput.addEventListener('input', () => {
-      localStorage.setItem('cf_wol_token', tokenInput.value);
-    });
-
     function showAlert(msg, type = 'info') {
       alertBox.textContent = msg;
       alertBox.className = 'notification ' + type;
       alertBox.style.display = 'block';
     }
 
-    function getToken() {
-      return tokenInput.value.trim();
-    }
-
     async function toggleAutoOn(enabled) {
-      const token = getToken();
-      if (!token) {
-        showAlert('Please provide your Secret Token.', 'error');
-        autoOnToggle.checked = !enabled;
-        return;
-      }
-
       try {
         const res = await fetch('/auto-on', {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ auto_turn_on: enabled })
         });
         const data = await res.json();
@@ -412,19 +368,11 @@ function renderDashboardHTML(authToken) {
     }
 
     async function fetchStatus() {
-      const token = getToken();
-      if (!token) return;
-
       try {
-        const res = await fetch('/status', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
+        const res = await fetch('/status');
         if (!res.ok) {
-          if (res.status === 401) {
-            badgeText.textContent = "UNAUTHORIZED";
-            statusBadge.className = "badge badge-offline";
-            aodStatus.textContent = "Auth Error";
-          }
+          badgeText.textContent = "ERROR";
+          statusBadge.className = "badge badge-offline";
           return;
         }
 
@@ -476,21 +424,12 @@ function renderDashboardHTML(authToken) {
     }
 
     async function triggerWOL(force = false) {
-      const token = getToken();
-      if (!token) {
-        showAlert('Please provide your Secret Token.', 'error');
-        return;
-      }
-
       showAlert('Sending trigger request...', 'info');
 
       try {
         const res = await fetch('/trigger', {
           method: 'POST',
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ force })
         });
 
@@ -504,11 +443,10 @@ function renderDashboardHTML(authToken) {
           showAlert(data.message || 'Trigger failed', 'error');
         }
       } catch (err) {
-        showAlert('Network error communicating with Cloudflare', 'error');
+        showAlert('Network error communicating with server', 'error');
       }
     }
 
-    // Auto-refresh status every 4 seconds
     fetchStatus();
     setInterval(fetchStatus, 4000);
   </script>
@@ -522,21 +460,15 @@ export default {
     const authHeader = request.headers.get("Authorization");
     const tokenQuery = url.searchParams.get("token");
 
-    // Dual-Token Configuration (Set in Cloudflare Dashboard -> Variables and Secrets)
-    // Supports fallback to legacy API_KEY for backward compatibility
+    // Cloudflare Access headers present when user passes Cloudflare Access login
+    const cfAccessEmail = request.headers.get("cf-access-authenticated-user-email");
+    const cfAccessJwt   = request.headers.get("cf-access-jwt-assertion");
+
+    // Device token configuration (flashed onto Arduino Uno)
+    const aodSecret = env.AOD_DEVICE_KEY || env.API_KEY || API_KEY;
     const userSecret = env.USER_API_KEY || env.API_KEY || API_KEY;
-    const aodSecret  = env.AOD_DEVICE_KEY || env.API_KEY || API_KEY;
 
-    // Web Dashboard UI at GET /
-    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      const providedToken = tokenQuery || "";
-      return new Response(renderDashboardHTML(providedToken), {
-        status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" }
-      });
-    }
-
-    // Extract Bearer token
+    // Extract Bearer token if provided
     let clientToken = "";
     if (authHeader && authHeader.startsWith("Bearer ")) {
       clientToken = authHeader.substring(7).trim();
@@ -544,25 +476,37 @@ export default {
       clientToken = tokenQuery.trim();
     }
 
-    const isUser = clientToken && clientToken === userSecret;
-    const isAOD  = clientToken && clientToken === aodSecret;
+    // Role detection:
+    // User is authorized if:
+    // 1. Authenticated via Cloudflare Access (cfAccessEmail is present), OR
+    // 2. Presenting valid USER_API_KEY token
+    const isUser = Boolean(cfAccessEmail || cfAccessJwt || (clientToken && clientToken === userSecret));
 
-    // Helper: 401 Unauthorized
+    // AOD device is authorized only if presenting matching AOD_DEVICE_KEY
+    const isAOD = Boolean(clientToken && clientToken === aodSecret);
+
+    // Web Dashboard UI at GET / (Served directly; Cloudflare Access secures the page)
+    if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      return new Response(renderDashboardHTML(), {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    }
+
     const unauthorized = (msg = "Unauthorized") => new Response(
       JSON.stringify({ error: msg }),
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
 
-    // Helper: 403 Forbidden
     const forbidden = (msg = "Forbidden: Insufficient role permissions") => new Response(
       JSON.stringify({ error: msg }),
       { status: 403, headers: { "Content-Type": "application/json" } }
     );
 
-    // Route: POST /auto-on - USER ONLY
+    // Route: POST /auto-on - USER ONLY (Allowed via Cloudflare Access or User Token)
     if (request.method === "POST" && url.pathname === "/auto-on") {
       if (!isUser && !isAOD) return unauthorized();
-      if (!isUser) return forbidden("Only User token can configure auto turn on");
+      if (!isUser) return forbidden("Only User can configure auto turn on");
 
       let body = {};
       try { body = await request.json(); } catch(e) {}
@@ -579,7 +523,7 @@ export default {
       );
     }
 
-    // Route: GET /status - Read state (Accessible by both USER and AOD)
+    // Route: GET /status - Read state (Accessible by logged-in User or AOD Device)
     if (request.method === "GET" && url.pathname === "/status") {
       if (!isUser && !isAOD) return unauthorized();
 
@@ -592,7 +536,6 @@ export default {
       const lastPingEpoch = await env.WOL_STORE.get("aod_last_ping_epoch") || 0;
 
       // AUTOMATIC TURN ON LOGIC:
-      // If Auto Turn On is enabled and the server is OFFLINE, automatically arm trigger!
       let shouldTrigger = (pending === "true" || pending === "1");
       if (autoOn && serverStatus === "OFFLINE" && !shouldTrigger) {
         shouldTrigger = true;
@@ -607,7 +550,7 @@ export default {
           trigger: shouldTrigger,
           auto_turn_on: autoOn,
           mac: targetMac,
-          server_status: serverStatus,      // "ONLINE", "OFFLINE", "BOOTING", "FAILED_TO_TRIGGER"
+          server_status: serverStatus,
           server_last_seen: lastSeen,
           last_wol_sent: lastWolSent,
           aod_alive: aodAlive,
@@ -623,10 +566,10 @@ export default {
       );
     }
 
-    // Route: POST /trigger - USER ONLY
+    // Route: POST /trigger - USER ONLY (Allowed via Cloudflare Access or User Token)
     if (request.method === "POST" && url.pathname === "/trigger") {
       if (!isUser && !isAOD) return unauthorized();
-      if (!isUser) return forbidden("Only User token can trigger Wake-on-LAN");
+      if (!isUser) return forbidden("Only User can trigger Wake-on-LAN");
 
       let reqData = {};
       try { reqData = await request.json(); } catch (e) {}
@@ -693,10 +636,10 @@ export default {
       let body = {};
       try { body = await request.json(); } catch(e) {}
 
-      const status = body.status || "ONLINE"; // "ONLINE" or "OFFLINE"
+      const status = body.status || "ONLINE";
       await env.WOL_STORE.put("server_status", status);
       await env.WOL_STORE.put("server_last_seen", new Date().toISOString());
-      await env.WOL_STORE.put("aod_last_ping_epoch", String(Date.now())); // Serves as AOD health check
+      await env.WOL_STORE.put("aod_last_ping_epoch", String(Date.now()));
 
       return new Response(
         JSON.stringify({ success: true, server_status: status }),
@@ -707,12 +650,12 @@ export default {
     return new Response(
       JSON.stringify({
         endpoints: {
-          "GET /": "Web Dashboard UI",
-          "GET /status": "Poll trigger & server state (User & Device)",
-          "POST /auto-on": "Configure Automatic Turn On (User only)",
-          "POST /trigger": "Arm WOL trigger (User only)",
+          "GET /": "Web Dashboard UI (Cloudflare Access secured)",
+          "GET /status": "Poll trigger & server state",
+          "POST /auto-on": "Configure Automatic Turn On",
+          "POST /trigger": "Arm WOL trigger",
           "POST /ack": "Disarm trigger after WOL packet is sent (Device only)",
-          "POST /server/ping": "Report server online/offline and renew AOD health check (Device only)"
+          "POST /server/ping": "Report server online/offline (Device only)"
         }
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
