@@ -27,17 +27,19 @@ SoftwareSerial espSerial(2, 3); // RX, TX
 // WiFi & Cloudflare Configuration
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.workers.dev";
+const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.example.com";
 const char* AUTH_TOKEN    = "CHANGE_ME_AOD_DEVICE_KEY"; // Set to match AOD_DEVICE_KEY in Cloudflare Worker
 
 // Server Configuration
-const char* SERVER_MAC    = "AA:BB:CC:DD:EE:FF";
-const char* SERVER_IP     = "192.168.1.100";
+const char* SERVER_MAC    = "00:11:22:33:44:55"; // SECONDARY PC
+// const char* SERVER_MAC    = "00:11:22:33:44:55"; // SERVER
+const char* SERVER_IP     = "192.168.1.100"; // SECONDARY PC
+const char* SERVER_IP     = "192.168.1.100"; // SERVER
 const int   SERVER_PORT   = 22;
 
 // Timers (Two separate polling intervals)
 const unsigned long SERVER_CHECK_INTERVAL = 5000;   // Check server every 5 seconds locally
-const unsigned long CF_SYNC_INTERVAL      = 20000;  // Sync with Cloudflare every 20 seconds
+const unsigned long CF_SYNC_INTERVAL      = 30000;  // Sync with Cloudflare every 30 seconds
 
 unsigned long lastServerCheckTime = 0;
 unsigned long lastCfSyncTime      = 0;
@@ -140,7 +142,8 @@ void updateServerStatusOnCloudflare(ServerState state) {
     String sendCmd = "AT+CIPSEND=" + String(req.length());
     if (sendCommand(sendCmd, 3000, ">")) {
       espSerial.print(req);
-      Serial.println(F("[Cloudflare] Status updated to: ") + statusStr);
+      Serial.print(F("[Cloudflare] Status updated to: "));
+      Serial.println(statusStr);
     }
     delay(500);
     sendCommand("AT+CIPCLOSE", 1000, "OK");
