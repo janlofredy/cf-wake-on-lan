@@ -21,7 +21,7 @@
 #if __has_include("config.h")
   #include "config.h"
 #else
-  #include "config.h.example"
+  #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
 #endif
 
 // SoftwareSerial pins connected to ESP8266 shield (Pins 2 & 3)
