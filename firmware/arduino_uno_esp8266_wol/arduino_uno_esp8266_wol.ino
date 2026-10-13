@@ -257,8 +257,16 @@ void runTestCF() {
 // ==========================================
 void setup() {
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
-  delay(1500);
+
+  // INSTANT HEARTBEAT: 2 quick blinks right on power-up
+  // If you see this, the Uno CPU is 100% running!
+  for (int i = 0; i < 2; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(150);
+    digitalWrite(LED_PIN, LOW);
+    delay(150);
+  }
+  delay(1000);
 
 #if RUN_MODE == MODE_TEST_AT
   runTestAT();
