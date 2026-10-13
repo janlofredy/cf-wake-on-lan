@@ -1,0 +1,27 @@
+#pragma once
+
+// ==========================================
+// Copy this file to "config.h" in the same folder.
+// "config.h" is ignored by git so your secrets will never be pushed.
+// ==========================================
+
+// Wi-Fi Configuration (2.4 GHz only)
+#define WIFI_SSID       "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+
+// Cloudflare Worker Configuration
+// Hostname ONLY (no "https://").
+// e.g. "YOUR_WORKER_SUBDOMAIN.workers.dev" or "cf-wake-on-lan.your-subdomain.workers.dev"
+#define CF_HOST         "YOUR_WORKER_SUBDOMAIN.workers.dev"
+
+// AOD Device Secret Token (matches AOD_DEVICE_KEY in Cloudflare Worker)
+#define AUTH_TOKEN      "CHANGE_ME_AOD_DEVICE_KEY"
+
+// Target Server Configuration
+#define SERVER_MAC      "00:11:22:33:44:55"
+#define SERVER_IP       "192.168.1.100"
+#define SERVER_PORT     22
+
+// Timing Configuration (milliseconds)
+#define SERVER_CHECK_INTERVAL_MS 5000   // Probe LAN server every 5 seconds
+#define CF_SYNC_INTERVAL_MS      30000  // Sync with Cloudflare every 30 seconds
