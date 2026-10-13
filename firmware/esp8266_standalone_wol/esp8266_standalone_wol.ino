@@ -52,6 +52,33 @@ void blinkLed(int times, int ms) {
   }
 }
 
+// Parse MAC address string (e.g. "00:11:22:33:44:55") into 6 bytes without sscanf
+bool parseMacAddress(const char* macStr, byte* macBytes) {
+  byte byteIdx = 0;
+  byte val = 0;
+  bool hasNibble = false;
+
+  for (int i = 0; macStr[i] != '\0' && byteIdx < 6; i++) {
+    char c = macStr[i];
+    int nibble = -1;
+    if (c >= '0' && c <= '9') nibble = c - '0';
+    else if (c >= 'a' && c <= 'f') nibble = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+
+    if (nibble != -1) {
+      val = (val << 4) | (byte)nibble;
+      if (hasNibble) {
+        macBytes[byteIdx++] = val;
+        val = 0;
+        hasNibble = false;
+      } else {
+        hasNibble = true;
+      }
+    }
+  }
+  return (byteIdx == 6);
+}
+
 // Send Wake-on-LAN UDP magic packet (102 bytes) to 255.255.255.255:9
 void sendWOLPacket() {
   Serial.println(F("[WOL] Sending Wake-on-LAN magic packet..."));
@@ -59,11 +86,11 @@ void sendWOLPacket() {
   byte magicPacket[102];
   memset(magicPacket, 0xFF, 6);
 
-  int mac[6];
-  if (sscanf(SERVER_MAC, "%x:%x:%x:%x:%x:%x", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) == 6) {
+  byte mac[6] = {0};
+  if (parseMacAddress(SERVER_MAC, mac)) {
     for (int i = 0; i < 16; i++) {
       for (int m = 0; m < 6; m++) {
-        magicPacket[6 + (i * 6) + m] = (byte)mac[m];
+        magicPacket[6 + (i * 6) + m] = mac[m];
       }
     }
 
