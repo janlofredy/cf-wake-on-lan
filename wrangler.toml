@@ -2,7 +2,6 @@ name = "cf-wake-on-lan"
 main = "cloudflare-worker/src/index.js"
 compatibility_date = "2024-01-01"
 
-# Note for Cloudflare Git Integration:
-# KV namespaces are bound in the Cloudflare Dashboard under:
-# Worker Settings -> Bindings -> Add -> KV Namespace
-# Variable Name: WOL_STORE
+[[kv_namespaces]]
+binding = "WOL_STORE"
+id = "YOUR_KV_NAMESPACE_ID"
