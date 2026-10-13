@@ -1,19 +1,19 @@
+#include <SoftwareSerial.h>
+
 /**
  * Arduino Uno R3 + WangTongze ESP8266 ESP-12E WiFi Shield
- * Direct Hardware Serial via Pins D0 & D1 (No Jumper Cables Required!)
+ * Connected via SoftwareSerial on Pins D2 & D3 (DuPont Jumpers)
  *
- * DIP SWITCH GUIDE:
- * - WHEN UPLOADING CODE VIA USB:
- *     Switch 1: OFF
- *     Switch 2: OFF
- *     Switch 3: OFF (NOR mode)
- *     Switch 4: OFF
+ * DIP SWITCHES:
+ * Set ALL 4 switches to OFF permanently!
+ *   Switch 1: OFF
+ *   Switch 2: OFF
+ *   Switch 3: OFF (NOR mode)
+ *   Switch 4: OFF
  *
- * - WHEN RUNNING (AOD or ANY TEST MODE):
- *     Switch 1: ON  (P1 TTLSW: routes ESP TX to Uno D0)
- *     Switch 2: ON  (P2 TTLSW: routes ESP RX to Uno D1)
- *     Switch 3: OFF (P3 DFU/NOR: MUST be OFF for normal operation!)
- *     Switch 4: OFF
+ * JUMPER CONNECTIONS:
+ * - Shield "TXD" (or TX) pin -> Arduino Uno Pin D2 (Uno RX)
+ * - Shield "RXD" (or RX) pin -> Arduino Uno Pin D3 (Uno TX)
  */
 
 #if __has_include("config.h")
@@ -23,7 +23,10 @@
 #endif
 
 #define LED_PIN 13
-#define espSerial Serial
+
+// SoftwareSerial for ESP8266 communication on D2/D3
+// Hardware Serial (Serial) remains 100% free for your USB Serial Monitor!
+SoftwareSerial espSerial(2, 3); // RX = Pin 2, TX = Pin 3
 
 // State Memory
 enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
@@ -72,6 +75,7 @@ bool probeServer() {
 
 // Send Wake-on-LAN UDP magic packet (102 bytes)
 void sendWOLPacket() {
+  Serial.println(F("[WOL] Sending Wake-on-LAN packet..."));
   if (sendCommand("AT+CIPSTART=\"UDP\",\"255.255.255.255\",9", 3000, "OK")) {
     byte packet[102];
     memset(packet, 0xFF, 6);
@@ -89,7 +93,8 @@ void sendWOLPacket() {
       for (int i = 0; i < 102; i++) {
         espSerial.write(packet[i]);
       }
-      blinkLed(5, 50); // 5 fast blinks indicate WOL broadcast
+      Serial.println(F("[WOL] Magic packet transmitted!"));
+      blinkLed(5, 50);
     }
     sendCommand("AT+CIPCLOSE", 1000, "OK");
   }
@@ -110,6 +115,7 @@ void acknowledgeTrigger() {
     String sendCmd = "AT+CIPSEND=" + String(req.length());
     if (sendCommand(sendCmd, 3000, ">")) {
       espSerial.print(req);
+      Serial.println(F("[Cloudflare] Trigger disarmed (/ack)."));
     }
     delay(500);
     sendCommand("AT+CIPCLOSE", 1000, "OK");
@@ -134,6 +140,8 @@ void updateServerStatusOnCloudflare(ServerState state) {
     String sendCmd = "AT+CIPSEND=" + String(req.length());
     if (sendCommand(sendCmd, 3000, ">")) {
       espSerial.print(req);
+      Serial.print(F("[Cloudflare] Status updated: "));
+      Serial.println(statusStr);
       digitalWrite(LED_PIN, HIGH);
       delay(200);
       digitalWrite(LED_PIN, LOW);
@@ -166,6 +174,7 @@ void checkWOLTrigger() {
         res += (char)espSerial.read();
       }
       if (res.indexOf("\"trigger\":true") != -1) {
+        Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
         sendWOLPacket();
         delay(250);
         sendWOLPacket();
@@ -179,72 +188,94 @@ void checkWOLTrigger() {
 }
 
 void initESP() {
+  Serial.println(F("[ESP] Initializing communication on D2/D3..."));
   espSerial.begin(115200);
-  delay(1000);
+  delay(500);
   if (!sendCommand("AT", 1000, "OK")) {
     espSerial.begin(9600);
     delay(500);
-    sendCommand("AT", 1000, "OK");
+    if (!sendCommand("AT", 1000, "OK")) {
+      Serial.println(F("[ESP] AT communication failed! Check jumpers: TXD->D2, RXD->D3"));
+      return;
+    }
   }
+  Serial.println(F("[ESP] AT communication READY!"));
 }
 
 // ==========================================
 // TEST IMPLEMENTATIONS
 // ==========================================
 void runTestAT() {
-  // Try 115200 baud
+  Serial.println(F("\n--- RUNNING TEST 1: AT Communication Check ---"));
+  
   espSerial.begin(115200);
   delay(500);
   while (espSerial.available()) espSerial.read();
   
   if (sendCommand("AT", 1500, "OK")) {
-    while (true) blinkLed(1, 100); // Fast rapid blink = SUCCESS
+    Serial.println(F(">>> SUCCESS! ESP8266 responding at 115200 baud! <<<"));
+    while (true) blinkLed(1, 100);
   }
 
-  // Fallback to 9600 baud
   espSerial.begin(9600);
   delay(500);
   while (espSerial.available()) espSerial.read();
   if (sendCommand("AT", 1500, "OK")) {
-    while (true) blinkLed(1, 100); // Fast rapid blink = SUCCESS
+    Serial.println(F(">>> SUCCESS! ESP8266 responding at 9600 baud! <<<"));
+    while (true) blinkLed(1, 100);
   }
 
-  // FAILED: Solid ON
+  Serial.println(F(">>> FAILED! No response from ESP8266. Check wires: TXD->D2, RXD->D3 <<<"));
   digitalWrite(LED_PIN, HIGH);
 }
 
 void runTestWiFi() {
+  Serial.println(F("\n--- RUNNING TEST 2: Wi-Fi Connection Check ---"));
   initESP();
   sendCommand("AT+CWMODE=1", 1000, "OK");
+  Serial.print(F("[WiFi] Connecting to: "));
+  Serial.println(WIFI_SSID);
+  
   String join = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
-  if (sendCommand(join, 12000, "OK")) {
-    blinkLed(5, 400); // 5 slow blinks = SUCCESS!
+  if (sendCommand(join, 15000, "OK")) {
+    Serial.println(F(">>> SUCCESS! Wi-Fi Connected! <<<"));
+    blinkLed(5, 400);
   } else {
-    digitalWrite(LED_PIN, HIGH); // Solid ON = FAILED
+    Serial.println(F(">>> FAILED to connect to Wi-Fi! Check SSID/Password in config.h <<<"));
+    digitalWrite(LED_PIN, HIGH);
   }
 }
 
 void runTestWOL() {
+  Serial.println(F("\n--- RUNNING TEST 3: Standalone WOL Magic Packet Test ---"));
   initESP();
   sendCommand("AT+CWMODE=1", 1000, "OK");
   String join = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
   sendCommand(join, 10000, "OK");
+
+  Serial.print(F("[WOL] Broadcasting magic packets to: "));
+  Serial.println(SERVER_MAC);
 
   for (int i = 0; i < 3; i++) {
     sendWOLPacket();
     delay(500);
   }
-  blinkLed(10, 150); // 10 pulses = Dispatched
+  Serial.println(F(">>> Check your PC! It should be turning on now! <<<"));
+  blinkLed(10, 150);
 }
 
 void runTestCF() {
+  Serial.println(F("\n--- RUNNING TEST 4: Cloudflare Ping Test ---"));
   initESP();
   sendCommand("AT+CWMODE=1", 1000, "OK");
   String join = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
   sendCommand(join, 10000, "OK");
 
-  // Ping Cloudflare
+  Serial.print(F("[Cloudflare] Connecting to: "));
+  Serial.println(CF_HOST);
+
   updateServerStatusOnCloudflare(STATE_ONLINE);
+  Serial.println(F(">>> Check web dashboard! AOD Device should show CONNECTED! <<<"));
 
   while (true) {
     blinkLed(3, 100);
@@ -257,16 +288,12 @@ void runTestCF() {
 // ==========================================
 void setup() {
   pinMode(LED_PIN, OUTPUT);
-
-  // INSTANT HEARTBEAT: 2 quick blinks right on power-up
-  // If you see this, the Uno CPU is 100% running!
-  for (int i = 0; i < 2; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(150);
-    digitalWrite(LED_PIN, LOW);
-    delay(150);
-  }
+  Serial.begin(9600); // USB Serial Monitor at 9600 baud
   delay(1000);
+
+  Serial.println(F("\n=========================================="));
+  Serial.println(F("   cf-wake-on-lan Controller Starting...  "));
+  Serial.println(F("=========================================="));
 
 #if RUN_MODE == MODE_TEST_AT
   runTestAT();
@@ -287,12 +314,13 @@ void setup() {
   sendCommand("AT+CWMODE=1", 1000, "OK");
   String joinCmd = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
   sendCommand(joinCmd, 8000, "OK");
-  blinkLed(3, 200); // 3 blinks = Normal Boot Ready
+  Serial.println(F("[Ready] Always-On Device loop active."));
+  blinkLed(3, 200);
 }
 
 void loop() {
 #if RUN_MODE != MODE_NORMAL
-  return; // Tests halt here
+  return; // Tests halt in setup
 #endif
 
   unsigned long now = millis();
@@ -302,6 +330,8 @@ void loop() {
     lastServerCheckTime = now;
     bool isAlive = probeServer();
     currentServerState = isAlive ? STATE_ONLINE : STATE_OFFLINE;
+    Serial.print(F("[Server LAN Probe] Status: "));
+    Serial.println(isAlive ? F("ONLINE") : F("OFFLINE"));
   }
 
   // --- INTERVAL 2: Cloudflare Synchronization ---
