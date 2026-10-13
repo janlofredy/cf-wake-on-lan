@@ -1,21 +1,19 @@
-#include <SoftwareSerial.h>
-
 /**
- * Arduino Uno R3 + ESP8266 ESP-12E WiFi Shield
- * 
- * Hardware Setup:
- * - Arduino Uno with ESP8266 ESP-12E WiFi Shield mounted on top.
- * - DIP switch setup for normal operation:
- *     1: OFF
- *     2: OFF
- *     3: ON  (routes ESP TX -> Uno D2)
- *     4: ON  (routes ESP RX -> Uno D3)
- * - (During firmware upload to Uno, set all switches 1,2,3,4 to OFF).
+ * Arduino Uno R3 + WangTongze ESP8266 ESP-12E WiFi Shield
+ * NO JUMPER CABLES NEEDED! (Direct Hardware Serial via Pins D0 & D1)
  *
- * Configuration:
- * - Copy "config.h.example" to "config.h" in this folder.
- * - Fill in your Wi-Fi credentials, CF_HOST, AUTH_TOKEN, and Server MAC/IP.
- * - "config.h" is ignored by git and will never be committed to GitHub.
+ * DIP SWITCH GUIDE:
+ * - WHEN UPLOADING CODE VIA USB:
+ *     Switch 1: OFF
+ *     Switch 2: OFF
+ *     Switch 3: OFF (NOR mode)
+ *     Switch 4: OFF
+ *
+ * - WHEN RUNNING AS ALWAYS-ON DEVICE (AOD):
+ *     Switch 1: ON  (P1 TTLSW: routes ESP TX to Uno D0)
+ *     Switch 2: ON  (P2 TTLSW: routes ESP RX to Uno D1)
+ *     Switch 3: OFF (P3 DFU/NOR: must be OFF for normal operation!)
+ *     Switch 4: OFF
  */
 
 #if __has_include("config.h")
@@ -24,8 +22,11 @@
   #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
 #endif
 
-// SoftwareSerial pins connected to ESP8266 shield (Pins 2 & 3)
-SoftwareSerial espSerial(2, 3); // RX, TX
+// Built-in LED on Arduino Uno (Pin 13) for visual status
+#define LED_PIN 13
+
+// Use Uno's Hardware Serial (Pins 0 & 1)
+#define espSerial Serial
 
 // State Memory
 enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
@@ -34,6 +35,15 @@ ServerState lastSentServerState  = STATE_UNKNOWN;
 
 unsigned long lastServerCheckTime = 0;
 unsigned long lastCfSyncTime      = 0;
+
+void blinkLed(int times, int ms) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(ms);
+    digitalWrite(LED_PIN, LOW);
+    delay(ms);
+  }
+}
 
 bool sendCommand(String cmd, unsigned long timeout, String expectedResponse) {
   espSerial.println(cmd);
@@ -65,7 +75,6 @@ bool probeServer() {
 
 // Send Wake-on-LAN UDP magic packet (102 bytes)
 void sendWOLPacket() {
-  Serial.println(F("[WOL] Transmitting Wake-on-LAN UDP Packet..."));
   if (sendCommand("AT+CIPSTART=\"UDP\",\"255.255.255.255\",9", 3000, "OK")) {
     byte packet[102];
     memset(packet, 0xFF, 6);
@@ -83,7 +92,8 @@ void sendWOLPacket() {
       for (int i = 0; i < 102; i++) {
         espSerial.write(packet[i]);
       }
-      Serial.println(F("[WOL] Magic packet broadcast complete!"));
+      // Rapid visual blink on Pin 13 indicates WOL packet sent!
+      blinkLed(5, 50);
     }
     sendCommand("AT+CIPCLOSE", 1000, "OK");
   }
@@ -128,8 +138,10 @@ void updateServerStatusOnCloudflare(ServerState state) {
     String sendCmd = "AT+CIPSEND=" + String(req.length());
     if (sendCommand(sendCmd, 3000, ">")) {
       espSerial.print(req);
-      Serial.print(F("[Cloudflare] Status updated to: "));
-      Serial.println(statusStr);
+      // Solid pulse indicates status sync
+      digitalWrite(LED_PIN, HIGH);
+      delay(200);
+      digitalWrite(LED_PIN, LOW);
     }
     delay(500);
     sendCommand("AT+CIPCLOSE", 1000, "OK");
@@ -159,9 +171,8 @@ void checkWOLTrigger() {
         res += (char)espSerial.read();
       }
       if (res.indexOf("\"trigger\":true") != -1) {
-        Serial.println(F("[TRIGGER] Pending Wake-on-LAN trigger detected!"));
         sendWOLPacket();
-        delay(200);
+        delay(250);
         sendWOLPacket(); // Send twice for reliability
         acknowledgeTrigger();
         break;
@@ -173,21 +184,29 @@ void checkWOLTrigger() {
 }
 
 void setup() {
-  Serial.begin(9600);
-  espSerial.begin(9600);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
 
-  Serial.println(F("\n--- Arduino Uno + ESP-12E Shield Dual-Interval WOL ---"));
-  
-  if (!sendCommand("AT", 2000, "OK")) {
-    espSerial.begin(115200);
-    sendCommand("AT", 2000, "OK");
+  // Initialize hardware serial
+  espSerial.begin(115200);
+  delay(1000);
+
+  // Test AT communication (WangTongze ESP-12E default baud is 115200)
+  if (!sendCommand("AT", 1000, "OK")) {
+    espSerial.begin(9600);
+    delay(500);
+    sendCommand("AT", 1000, "OK");
   }
 
-  sendCommand("AT+CWMODE=1", 2000, "OK");
+  // Set Station mode
+  sendCommand("AT+CWMODE=1", 1000, "OK");
   
+  // Connect to 2.4 GHz Wi-Fi
   String joinCmd = "AT+CWJAP=\"" + String(WIFI_SSID) + "\",\"" + String(WIFI_PASSWORD) + "\"";
-  Serial.println(F("[WiFi] Connecting..."));
-  sendCommand(joinCmd, 10000, "OK");
+  sendCommand(joinCmd, 8000, "OK");
+
+  // Indicate setup complete with 3 slow blinks on Uno Pin 13
+  blinkLed(3, 200);
 }
 
 void loop() {
@@ -198,29 +217,25 @@ void loop() {
     lastServerCheckTime = now;
     bool isAlive = probeServer();
     currentServerState = isAlive ? STATE_ONLINE : STATE_OFFLINE;
-    Serial.print(F("[Server Probe] Status: "));
-    Serial.println(isAlive ? F("ONLINE") : F("OFFLINE"));
   }
 
   // --- INTERVAL 2: Cloudflare Synchronization ---
   if (now - lastCfSyncTime >= CF_SYNC_INTERVAL_MS || lastCfSyncTime == 0) {
     lastCfSyncTime = now;
 
-    // 1. Update Cloudflare whenever status changes, or periodically (every ~60s) to keep AOD health alive
+    // 1. Update Cloudflare whenever status changes, or periodically (every ~60s)
     static unsigned long lastSentTime = 0;
     bool statusChanged = (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN);
     bool periodicRefresh = (now - lastSentTime >= 60000 || lastSentTime == 0);
 
     if (statusChanged || periodicRefresh) {
-      Serial.println(F("[AOD Health/Status] Pinging Cloudflare with server status..."));
       updateServerStatusOnCloudflare(currentServerState);
       lastSentServerState = currentServerState;
       lastSentTime = now;
     }
 
-    // 2. At the same time, when status is OFF (or on initial boot), check for triggers
+    // 2. When server is OFF (or initial state), check for pending triggers
     if (currentServerState == STATE_OFFLINE || currentServerState == STATE_UNKNOWN) {
-      Serial.println(F("[Server is OFF] Checking Cloudflare for WOL triggers..."));
       checkWOLTrigger();
     }
   }
