@@ -143,65 +143,56 @@ bool probeServer() {
 
 // Update server status on Cloudflare Worker
 void updateServerStatusOnCloudflare(ServerState state) {
-  WiFiClientSecure client;
-  client.setInsecure(); // Skip certificate thumbprint validation for simple worker pings
-
   HTTPClient http;
   String url = "https://" + String(CF_HOST) + "/server/ping";
 
-  if (http.begin(client, url)) {
-    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-    http.addHeader("Content-Type", "application/json");
+  http.begin(url);
+  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+  http.addHeader("Content-Type", "application/json");
 
-    String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
-    String payload   = "{\"status\":\"" + statusStr + "\"}";
+  String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
+  String payload   = "{\"status\":\"" + statusStr + "\"}";
 
-    Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
-    int httpCode = http.POST(payload);
+  Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
+  int httpCode = http.POST(payload);
 
-    if (httpCode > 0) {
-      Serial.printf("[CF] Response: %d\n", httpCode);
-      lastSentServerState = state;
-    } else {
-      Serial.printf("[CF] HTTP POST failed: %s\n", http.errorToString(httpCode).c_str());
-    }
-    http.end();
+  if (httpCode > 0) {
+    Serial.printf("[CF] Response: %d\n", httpCode);
+    lastSentServerState = state;
+  } else {
+    Serial.printf("[CF] HTTP POST failed, code: %d\n", httpCode);
   }
+  http.end();
 }
 
 // Check Cloudflare for pending WOL trigger (when server is offline)
 void checkWOLTrigger() {
-  WiFiClientSecure client;
-  client.setInsecure();
-
   HTTPClient http;
   String url = "https://" + String(CF_HOST) + "/status";
 
-  if (http.begin(client, url)) {
-    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+  http.begin(url);
+  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
 
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      if (payload.indexOf("\"trigger\":true") != -1) {
-        Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
-        sendWOLPacket();
-        delay(300);
-        sendWOLPacket();
+  int httpCode = http.GET();
+  if (httpCode == 200) {
+    String payload = http.getString();
+    if (payload.indexOf("\"trigger\":true") != -1) {
+      Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
+      sendWOLPacket();
+      delay(300);
+      sendWOLPacket();
 
-        // Acknowledge trigger
-        HTTPClient ackHttp;
-        String ackUrl = "https://" + String(CF_HOST) + "/server/acknowledge";
-        if (ackHttp.begin(client, ackUrl)) {
-          ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-          ackHttp.POST("");
-          ackHttp.end();
-          Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
-        }
-      }
+      // Acknowledge trigger
+      HTTPClient ackHttp;
+      String ackUrl = "https://" + String(CF_HOST) + "/server/acknowledge";
+      ackHttp.begin(ackUrl);
+      ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+      ackHttp.POST("");
+      ackHttp.end();
+      Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
     }
-    http.end();
   }
+  http.end();
 }
 
 void setup() {
