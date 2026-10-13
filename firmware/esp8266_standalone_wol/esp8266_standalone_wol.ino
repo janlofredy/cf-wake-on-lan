@@ -2,6 +2,7 @@
 #include <WiFiUdp.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <ESP8266WebServer.h>
 
 /**
  * ============================================================================
@@ -35,6 +36,7 @@
 #define LED_PIN 2
 
 WiFiUDP udp;
+ESP8266WebServer server(80);
 
 enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
 ServerState currentServerState  = STATE_UNKNOWN;
@@ -42,6 +44,7 @@ ServerState lastSentServerState = STATE_UNKNOWN;
 
 unsigned long lastServerCheckTime = 0;
 unsigned long lastCfSyncTime      = 0;
+unsigned long lastWolSentEpoch    = 0;
 
 void blinkLed(int times, int ms) {
   for (int i = 0; i < times; i++) {
@@ -184,15 +187,58 @@ void checkWOLTrigger() {
 
       // Acknowledge trigger
       HTTPClient ackHttp;
-      String ackUrl = "https://" + String(CF_HOST) + "/server/acknowledge";
+      String ackUrl = "https://" + String(CF_HOST) + "/ack";
       ackHttp.begin(ackUrl);
       ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-      ackHttp.POST("");
+      ackHttp.addHeader("Content-Type", "application/json");
+      ackHttp.POST("{\"result\":\"SENT\"}");
       ackHttp.end();
       Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
     }
   }
   http.end();
+}
+
+// Local ESP8266 Web Server handlers (Ultra-lightweight plain HTML for low storage & RAM)
+void handleRoot() {
+  String html = F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>ESP8266 WOL</title>"
+                  "<style>body{font-family:sans-serif;margin:20px;background:#111;color:#eee}"
+                  "h2{margin-bottom:10px}.box{background:#222;padding:15px;border-radius:6px;max-width:320px}"
+                  "p{margin:6px 0}button{background:#0284c7;color:#fff;border:none;padding:10px 18px;font-size:15px;border-radius:4px;cursor:pointer;width:100%;margin-top:10px}"
+                  "a{color:#38bdf8}</style></head><body>"
+                  "<div class='box'><h2>ESP8266 WOL Device</h2>"
+                  "<p><b>Server:</b> ");
+  html += (currentServerState == STATE_ONLINE) ? F("<span style='color:#4ade80'>ONLINE</span>") : (currentServerState == STATE_OFFLINE ? F("<span style='color:#f87171'>OFFLINE</span>") : F("UNKNOWN"));
+  html += F("</p><p><b>Target IP:</b> ");
+  html += SERVER_IP;
+  html += F("</p><p><b>Target MAC:</b> ");
+  html += SERVER_MAC;
+  html += F("</p><p><b>Free Heap:</b> ");
+  html += String(ESP.getFreeHeap());
+  html += F(" bytes</p>"
+            "<form method='POST' action='/trigger'><button type='submit'>Wake Server (Send WOL)</button></form>"
+            "<p style='margin-top:12px;font-size:12px'><a href='/'>Refresh</a></p>"
+            "</div></body></html>");
+  server.send(200, "text/html", html);
+}
+
+void handleManualTrigger() {
+  Serial.println(F("[HTTP] Manual WOL trigger requested via ESP web server."));
+  sendWOLPacket();
+  delay(200);
+  sendWOLPacket();
+  lastWolSentEpoch = millis();
+
+  // Redirect back to root
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+void handleStatusJson() {
+  String json = "{\"server\":\"";
+  json += (currentServerState == STATE_ONLINE) ? "ONLINE" : (currentServerState == STATE_OFFLINE ? "OFFLINE" : "UNKNOWN");
+  json += "\",\"ip\":\"" + String(SERVER_IP) + "\",\"mac\":\"" + String(SERVER_MAC) + "\",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
+  server.send(200, "application/json", json);
 }
 
 void setup() {
@@ -206,6 +252,14 @@ void setup() {
   Serial.println(F("========================================"));
 
   connectWiFi();
+
+  // Start local plain HTML web server on port 80
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/trigger", HTTP_POST, handleManualTrigger);
+  server.on("/status", HTTP_GET, handleStatusJson);
+  server.begin();
+  Serial.print(F("[Web] Local HTTP server active at: http://"));
+  Serial.println(WiFi.localIP());
 }
 
 void loop() {
@@ -214,6 +268,9 @@ void loop() {
     delay(2000);
     return;
   }
+
+  // Handle incoming HTTP client requests on ESP
+  server.handleClient();
 
   unsigned long currentMillis = millis();
 
@@ -244,5 +301,5 @@ void loop() {
     }
   }
 
-  delay(100);
+  delay(10);
 }
