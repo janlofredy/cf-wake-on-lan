@@ -20,11 +20,7 @@
  * - SOLID ON: Failed to connect via HTTPS / SSL to Cloudflare.
  */
 
-#if __has_include("../../config.h")
-  #include "../../config.h"
-#elif __has_include("../config.h")
-  #include "../config.h"
-#elif __has_include("config.h")
+#if __has_include("config.h")
   #include "config.h"
 #else
   #error "Missing config.h! Please create config.h with WIFI_SSID, WIFI_PASSWORD, CF_HOST, and AUTH_TOKEN."
