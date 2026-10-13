@@ -9,9 +9,7 @@
  * 3. Interactive Serial Passthrough: You can type "AT" in the Serial Monitor and see what comes back!
  */
 
-#if __has_include("config.h")
-  #include "config.h"
-#endif
+
 
 // SoftwareSerial on D2 (RX) and D3 (TX)
 SoftwareSerial espSerial(2, 3);

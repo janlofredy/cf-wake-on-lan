@@ -16,10 +16,14 @@
  * - Shield "RXD" (or RX) pin -> Arduino Uno Pin D3 (Uno TX)
  */
 
-#if __has_include("config.h")
-  #include "config.h"
+#if defined(__has_include)
+  #if __has_include("config.h")
+    #include "config.h"
+  #else
+    #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
+  #endif
 #else
-  #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
+  #include "config.h"
 #endif
 
 #define LED_PIN 13
@@ -73,6 +77,33 @@ bool probeServer() {
   return false;
 }
 
+// Parse MAC address string (e.g. "74:56:3C:8C:32:C4") into 6 bytes without sscanf
+bool parseMacAddress(const char* macStr, byte* macBytes) {
+  byte byteIdx = 0;
+  byte val = 0;
+  bool hasNibble = false;
+
+  for (int i = 0; macStr[i] != '\0' && byteIdx < 6; i++) {
+    char c = macStr[i];
+    int nibble = -1;
+    if (c >= '0' && c <= '9') nibble = c - '0';
+    else if (c >= 'a' && c <= 'f') nibble = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
+
+    if (nibble != -1) {
+      val = (val << 4) | (byte)nibble;
+      if (hasNibble) {
+        macBytes[byteIdx++] = val;
+        val = 0;
+        hasNibble = false;
+      } else {
+        hasNibble = true;
+      }
+    }
+  }
+  return (byteIdx == 6);
+}
+
 // Send Wake-on-LAN UDP magic packet (102 bytes)
 void sendWOLPacket() {
   Serial.println(F("[WOL] Sending Wake-on-LAN packet..."));
@@ -80,11 +111,11 @@ void sendWOLPacket() {
     byte packet[102];
     memset(packet, 0xFF, 6);
     
-    int mac[6];
-    sscanf(SERVER_MAC, "%x:%x:%x:%x:%x:%x", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+    byte mac[6] = {0};
+    parseMacAddress(SERVER_MAC, mac);
     for (int i = 0; i < 16; i++) {
       for (int m = 0; m < 6; m++) {
-        packet[6 + (i * 6) + m] = (byte)mac[m];
+        packet[6 + (i * 6) + m] = mac[m];
       }
     }
 
