@@ -19,11 +19,7 @@
  * - CONTINUOUS SOLID ON: Wi-Fi connection FAILED (Check SSID/Password in config.h).
  */
 
-#if __has_include("../../config.h")
-  #include "../../config.h"
-#elif __has_include("../config.h")
-  #include "../config.h"
-#elif __has_include("config.h")
+#if __has_include("config.h")
   #include "config.h"
 #else
   #error "Missing config.h! Please create config.h with WIFI_SSID and WIFI_PASSWORD."

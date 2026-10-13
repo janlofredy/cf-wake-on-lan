@@ -21,11 +21,7 @@
  * - LED on Pin 13 pulses 10 times to indicate WOL packets dispatched.
  */
 
-#if __has_include("../../config.h")
-  #include "../../config.h"
-#elif __has_include("../config.h")
-  #include "../config.h"
-#elif __has_include("config.h")
+#if __has_include("config.h")
   #include "config.h"
 #else
   #error "Missing config.h! Please create config.h with WIFI_SSID, WIFI_PASSWORD, and SERVER_MAC."
