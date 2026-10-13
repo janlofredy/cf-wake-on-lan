@@ -294,28 +294,12 @@ function renderDashboardHTML() {
 
       <div class="stats-grid">
         <div class="stat-box">
-          <div class="stat-label">Server State</div>
-          <div id="statServerStatus" class="stat-value">Checking...</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">AOD Microcontroller</div>
+          <div class="stat-label">AOD Device (Uno)</div>
           <div id="aodStatus" class="stat-value">Checking...</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Pending WOL Trigger</div>
-          <div id="statPendingTrigger" class="stat-value">--</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Last Ping Seen</div>
           <div id="lastSeen" class="stat-value">--:--:--</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Target MAC</div>
-          <div id="statTargetMac" class="stat-value" style="font-size:0.75rem;">--</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Last WOL Sent</div>
-          <div id="statLastWol" class="stat-value" style="font-size:0.75rem;">Never</div>
         </div>
       </div>
 
@@ -332,24 +316,18 @@ function renderDashboardHTML() {
       </div>
 
       <div class="btn-group">
-        <button id="directTriggerBtn" class="btn btn-primary" onclick="triggerWOL(true)">
-          <span>⚡</span> Direct Manual Trigger (Send WOL)
+        <button id="triggerBtn" class="btn btn-primary" onclick="triggerWOL(false)">
+          <span>🚀</span> Start Server (WOL)
         </button>
-        <button id="triggerBtn" class="btn btn-secondary" onclick="triggerWOL(false)">
-          <span>🚀</span> Safe Trigger (Only if Offline)
+        <button id="forceTriggerBtn" class="btn btn-secondary" onclick="triggerWOL(true)">
+          Force Send WOL Packet
         </button>
       </div>
 
       <div id="alertBox" class="notification"></div>
 
-      <!-- Raw Status Live Inspector -->
-      <details style="margin-top: 1.25rem; font-size: 0.75rem; color: var(--text-muted); cursor: pointer;">
-        <summary style="user-select: none;">🔍 View Live Raw JSON Telemetry</summary>
-        <pre id="rawStatus" style="background: rgba(0,0,0,0.4); padding: 0.75rem; border-radius: 8px; margin-top: 0.5rem; overflow-x: auto; font-family: var(--font-mono);"></pre>
-      </details>
-
       <div class="cf-access-badge">
-        <span>🔒 Cloudflare Worker & Access Active</span>
+        <span>🔒 Protected by Cloudflare Access</span>
       </div>
     </div>
   </div>
@@ -357,17 +335,11 @@ function renderDashboardHTML() {
   <script>
     const statusBadge = document.getElementById('statusBadge');
     const badgeText = document.getElementById('badgeText');
-    const statServerStatus = document.getElementById('statServerStatus');
     const aodStatus = document.getElementById('aodStatus');
-    const statPendingTrigger = document.getElementById('statPendingTrigger');
     const lastSeen = document.getElementById('lastSeen');
-    const statTargetMac = document.getElementById('statTargetMac');
-    const statLastWol = document.getElementById('statLastWol');
     const alertBox = document.getElementById('alertBox');
     const triggerBtn = document.getElementById('triggerBtn');
-    const directTriggerBtn = document.getElementById('directTriggerBtn');
     const autoOnToggle = document.getElementById('autoOnToggle');
-    const rawStatus = document.getElementById('rawStatus');
 
     function showAlert(msg, type = 'info') {
       alertBox.textContent = msg;
@@ -405,39 +377,10 @@ function renderDashboardHTML() {
         }
 
         const data = await res.json();
-        rawStatus.textContent = JSON.stringify(data, null, 2);
 
         // Update Auto Turn On switch state
         if (typeof data.auto_turn_on !== 'undefined' && document.activeElement !== autoOnToggle) {
           autoOnToggle.checked = data.auto_turn_on;
-        }
-
-        // Server Status field
-        statServerStatus.textContent = data.server_status || 'UNKNOWN';
-        if (data.server_status === 'ONLINE') {
-          statServerStatus.style.color = "var(--success)";
-        } else if (data.server_status === 'BOOTING') {
-          statServerStatus.style.color = "var(--warning)";
-        } else {
-          statServerStatus.style.color = "var(--danger)";
-        }
-
-        // Pending trigger status
-        if (data.trigger) {
-          statPendingTrigger.textContent = "ARMED / PENDING";
-          statPendingTrigger.style.color = "var(--warning)";
-        } else {
-          statPendingTrigger.textContent = "IDLE";
-          statPendingTrigger.style.color = "var(--text-muted)";
-        }
-
-        // MAC & last WOL
-        statTargetMac.textContent = data.mac || 'Default (In Config)';
-        if (data.last_wol_sent) {
-          const wolDate = new Date(data.last_wol_sent);
-          statLastWol.textContent = wolDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        } else {
-          statLastWol.textContent = 'Never';
         }
 
         // Update Server Status Badge
@@ -456,7 +399,7 @@ function renderDashboardHTML() {
           statusBadge.classList.add('badge-offline');
           badgeText.textContent = 'OFFLINE';
           triggerBtn.disabled = false;
-          triggerBtn.innerHTML = '<span>🚀</span> Safe Trigger (Only if Offline)';
+          triggerBtn.innerHTML = '<span>🚀</span> Start Server (WOL)';
         }
 
         // AOD Device health
@@ -505,7 +448,7 @@ function renderDashboardHTML() {
     }
 
     fetchStatus();
-    setInterval(fetchStatus, 3000);
+    setInterval(fetchStatus, 4000);
   </script>
 </body>
 </html>`;
@@ -533,9 +476,14 @@ export default {
       clientToken = tokenQuery.trim();
     }
 
-    // TEMPORARY TESTING: Open up all access
-    const isUser = true;
-    const isAOD = true;
+    // Role detection:
+    // User is authorized if:
+    // 1. Authenticated via Cloudflare Access (cfAccessEmail is present), OR
+    // 2. Presenting valid USER_API_KEY token
+    const isUser = Boolean(cfAccessEmail || cfAccessJwt || (clientToken && clientToken === userSecret));
+
+    // AOD device is authorized only if presenting matching AOD_DEVICE_KEY
+    const isAOD = Boolean(clientToken && clientToken === aodSecret);
 
     // Web Dashboard UI at GET / (Served directly; Cloudflare Access secures the page)
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
