@@ -5,49 +5,35 @@
  * 
  * Hardware Setup:
  * - Arduino Uno with ESP8266 ESP-12E WiFi Shield mounted on top.
- * - Set shield DIP switches: 
- *   For Uno software serial communication: 
- *   SW 1, 2, 3, 4: Set to Arduino RX/TX pins (e.g. Uno Pins 2 & 3 or 8 & 9).
- *   Example with SoftwareSerial on Pin 2 (RX) and Pin 3 (TX):
- *     Uno Pin 2 -> Shield TX
- *     Uno Pin 3 -> Shield RX
+ * - DIP switch setup for normal operation:
+ *     1: OFF
+ *     2: OFF
+ *     3: ON  (routes ESP TX -> Uno D2)
+ *     4: ON  (routes ESP RX -> Uno D3)
+ * - (During firmware upload to Uno, set all switches 1,2,3,4 to OFF).
  *
- * Flow:
- * - Local server polling loop: checks if server is reachable on LAN at SERVER_CHECK_INTERVAL_MS.
- * - Tracks 'currentServerStatus' vs 'lastSentServerStatus'.
- * - Cloudflare sync loop: runs at CF_SYNC_INTERVAL_MS.
- *     1. If status changed, updates status on Cloudflare Worker.
- *     2. When status is OFF (or during sync), checks Cloudflare for pending WOL trigger.
- *     3. Dispatches WOL UDP packet if triggered, then sends acknowledgment.
+ * Configuration:
+ * - Copy "config.h.example" to "config.h" in this folder.
+ * - Fill in your Wi-Fi credentials, CF_HOST, AUTH_TOKEN, and Server MAC/IP.
+ * - "config.h" is ignored by git and will never be committed to GitHub.
  */
 
-// SoftwareSerial pins connected to ESP8266 shield
+#if __has_include("config.h")
+  #include "config.h"
+#else
+  #include "config.h.example"
+#endif
+
+// SoftwareSerial pins connected to ESP8266 shield (Pins 2 & 3)
 SoftwareSerial espSerial(2, 3); // RX, TX
-
-// WiFi & Cloudflare Configuration
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-const char* CF_HOST       = "YOUR_WORKER_SUBDOMAIN.example.com";
-const char* AUTH_TOKEN    = "CHANGE_ME_AOD_DEVICE_KEY"; // Set to match AOD_DEVICE_KEY in Cloudflare Worker
-
-// Server Configuration
-const char* SERVER_MAC    = "00:11:22:33:44:55"; // SECONDARY PC
-// const char* SERVER_MAC    = "00:11:22:33:44:55"; // SERVER
-const char* SERVER_IP     = "192.168.1.100"; // SECONDARY PC
-const char* SERVER_IP     = "192.168.1.100"; // SERVER
-const int   SERVER_PORT   = 22;
-
-// Timers (Two separate polling intervals)
-const unsigned long SERVER_CHECK_INTERVAL = 5000;   // Check server every 5 seconds locally
-const unsigned long CF_SYNC_INTERVAL      = 30000;  // Sync with Cloudflare every 30 seconds
-
-unsigned long lastServerCheckTime = 0;
-unsigned long lastCfSyncTime      = 0;
 
 // State Memory
 enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
 ServerState currentServerState   = STATE_UNKNOWN;
 ServerState lastSentServerState  = STATE_UNKNOWN;
+
+unsigned long lastServerCheckTime = 0;
+unsigned long lastCfSyncTime      = 0;
 
 bool sendCommand(String cmd, unsigned long timeout, String expectedResponse) {
   espSerial.println(cmd);
@@ -208,7 +194,7 @@ void loop() {
   unsigned long now = millis();
 
   // --- INTERVAL 1: Poll Local Server Status ---
-  if (now - lastServerCheckTime >= SERVER_CHECK_INTERVAL || lastServerCheckTime == 0) {
+  if (now - lastServerCheckTime >= SERVER_CHECK_INTERVAL_MS || lastServerCheckTime == 0) {
     lastServerCheckTime = now;
     bool isAlive = probeServer();
     currentServerState = isAlive ? STATE_ONLINE : STATE_OFFLINE;
@@ -217,7 +203,7 @@ void loop() {
   }
 
   // --- INTERVAL 2: Cloudflare Synchronization ---
-  if (now - lastCfSyncTime >= CF_SYNC_INTERVAL || lastCfSyncTime == 0) {
+  if (now - lastCfSyncTime >= CF_SYNC_INTERVAL_MS || lastCfSyncTime == 0) {
     lastCfSyncTime = now;
 
     // 1. Update Cloudflare whenever status changes, or periodically (every ~60s) to keep AOD health alive
