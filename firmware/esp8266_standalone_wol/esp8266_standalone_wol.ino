@@ -146,57 +146,88 @@ bool probeServer() {
 
 // Update server status on Cloudflare Worker
 void updateServerStatusOnCloudflare(ServerState state) {
+  WiFiClientSecure client;
+  client.setInsecure(); // Required for HTTPS on ESP8266
+  #if defined(ESP8266)
+  client.setBufferSizes(512, 512); // Conserve RAM for BearSSL
+  #endif
+  client.setTimeout(8000);
+
   HTTPClient http;
   String url = "https://" + String(CF_HOST) + "/server/ping";
 
-  http.begin(url);
-  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-  http.addHeader("Content-Type", "application/json");
+  #if defined(ESP8266)
+  if (http.begin(client, url)) {
+  #else
+  if (http.begin(url)) {
+  #endif
+    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+    http.addHeader("Content-Type", "application/json");
 
-  String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
-  String payload   = "{\"status\":\"" + statusStr + "\"}";
+    String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
+    String payload   = "{\"status\":\"" + statusStr + "\"}";
 
-  Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
-  int httpCode = http.POST(payload);
+    Serial.printf("[CF] Syncing state '%s' to %s (Free Heap: %u)...\n", 
+                  statusStr.c_str(), url.c_str(), ESP.getFreeHeap());
+    int httpCode = http.POST(payload);
 
-  if (httpCode > 0) {
-    Serial.printf("[CF] Response: %d\n", httpCode);
-    lastSentServerState = state;
-  } else {
-    Serial.printf("[CF] HTTP POST failed, code: %d\n", httpCode);
+    if (httpCode > 0) {
+      Serial.printf("[CF] Response: %d\n", httpCode);
+      lastSentServerState = state;
+    } else {
+      Serial.printf("[CF] HTTP POST failed, code: %d (%s)\n", 
+                    httpCode, http.errorToString(httpCode).c_str());
+    }
+    http.end();
   }
-  http.end();
 }
 
 // Check Cloudflare for pending WOL trigger (when server is offline)
 void checkWOLTrigger() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  #if defined(ESP8266)
+  client.setBufferSizes(512, 512);
+  #endif
+  client.setTimeout(8000);
+
   HTTPClient http;
   String url = "https://" + String(CF_HOST) + "/status";
 
-  http.begin(url);
-  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+  #if defined(ESP8266)
+  if (http.begin(client, url)) {
+  #else
+  if (http.begin(url)) {
+  #endif
+    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
 
-  int httpCode = http.GET();
-  if (httpCode == 200) {
-    String payload = http.getString();
-    if (payload.indexOf("\"trigger\":true") != -1) {
-      Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
-      sendWOLPacket();
-      delay(300);
-      sendWOLPacket();
+    int httpCode = http.GET();
+    if (httpCode == 200) {
+      String payload = http.getString();
+      if (payload.indexOf("\"trigger\":true") != -1) {
+        Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
+        sendWOLPacket();
+        delay(300);
+        sendWOLPacket();
 
-      // Acknowledge trigger
-      HTTPClient ackHttp;
-      String ackUrl = "https://" + String(CF_HOST) + "/ack";
-      ackHttp.begin(ackUrl);
-      ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-      ackHttp.addHeader("Content-Type", "application/json");
-      ackHttp.POST("{\"result\":\"SENT\"}");
-      ackHttp.end();
-      Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
+        // Acknowledge trigger
+        HTTPClient ackHttp;
+        String ackUrl = "https://" + String(CF_HOST) + "/ack";
+        #if defined(ESP8266)
+        if (ackHttp.begin(client, ackUrl)) {
+        #else
+        if (ackHttp.begin(ackUrl)) {
+        #endif
+          ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+          ackHttp.addHeader("Content-Type", "application/json");
+          ackHttp.POST("{\"result\":\"SENT\"}");
+          ackHttp.end();
+          Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
+        }
+      }
     }
+    http.end();
   }
-  http.end();
 }
 
 // Local ESP8266 Web Server handlers (Ultra-lightweight plain HTML for low storage & RAM)
