@@ -111,18 +111,61 @@ You can deploy the Worker directly from this repository using either the **Cloud
 
 ### 2. Microcontroller Setup
 
-#### 🌟 Primary Choice: Arduino Uno + ESP8266 ESP-12E Shield
+#### 🌟 Recommended: Direct Flashing to ESP8266 (Bypass AT Commands)
+Instead of dealing with flaky factory AT firmware, baud rate mismatches, and `SoftwareSerial` overhead between the Uno and ESP, **flash code directly to the ESP-12E module on the shield**. The ESP8266 has a 32-bit CPU and its own Wi-Fi/UDP stack, making it far faster, more stable, and self-contained!
+
+##### 📺 Reference Guides & Videos
+- **[Instructables Setup Guide: ESP8266 ESP-12E UART Wireless WIFI Shield TTL Converter](https://www.instructables.com/ESP8266-ESP-12E-UART-Wireless-WIFI-Shield-TTL-Conv/)**
+- **[Part 1: Arduino Uno + ESP8266 WiFi Shield Setup Guide (YouTube)](https://www.youtube.com/watch?v=Y1GWoiuE-Ls)**
+- **[Part 2: Uploading & Testing WebServer Example directly on ESP8266 (YouTube)](https://www.youtube.com/watch?v=jCL4VuFRKvQ)**
+
+> [!NOTE]
+> **Board Identification ("MOER" vs "MORE")**:
+> Check the white silkscreen text printed on your WiFi shield near the ESP-12 module:
+> - **`"Moer info & tech"`** (or `"Moer info $ tech"`): A common clone printing misspelling (often manufactured by WangTongze / Doit clones). As highlighted in the community and Instructables guides, this variant often has DIP switch / hardware serial routing conflicts with the Arduino's D0/D1 pins, which is why flashing the ESP8266 module directly (or bypassing the Uno via RESET-to-GND) is strongly recommended over relying on factory AT firmware!
+> - **`"More info & tech"`**: Standard silkscreen printing.
+
+---
+
+##### 🛠️ How to Flash Directly to the ESP8266 (Bypassing AT Commands)
+
+1. **Silence the Arduino Uno MCU (USB-to-Serial Bridge Mode)**:
+   - Connect a DuPont jumper between the Arduino Uno **`RESET`** pin and **`GND`**.
+   - *(This halts the Uno's ATmega328P so its onboard USB-UART chip speaks directly to the ESP8266).*
+
+2. **Set Shield DIP Switches to Flash Mode**:
+   - Set **DIP 1**: `OFF`
+   - Set **DIP 2**: `OFF`
+   - Set **DIP 3**: `ON` (pulls GPIO0 LOW for download boot mode)
+   - Set **DIP 4**: `ON`
+
+3. **Bridge Serial Communication (Uno <-> ESP8266)**:
+   - Connect Shield **`TX` / `TXD`** $\rightarrow$ Arduino Uno **`D1` (TX)** (or D0 depending on shield routing).
+   - Connect Shield **`RX` / `RXD`** $\rightarrow$ Arduino Uno **`D0` (RX)** (or D1 depending on shield routing).
+   - *Note*: Because the Uno MCU is bypassed, connect `TX` to `TX` and `RX` to `RX` so the USB-Serial bridge routes directly to the ESP.
+
+4. **Arduino IDE Setup**:
+   - Go to **Boards Manager** and install **`esp8266 by ESP8266 Community`** (version 2.7.4 or 3.x).
+   - Select Board: **`Generic ESP8266 Module`**.
+   - Flash Size: **`4MB (FS:2MB OTA:~1019KB)`** (or `512KB` depending on your ESP-12 chip variant).
+   - Upload Speed: **`115200`**.
+
+5. **Upload & Run**:
+   - Copy [`firmware/esp8266_standalone_wol/config.h.example`](file:///Users/janlofredy/Documents/ServerStarter/firmware/esp8266_standalone_wol/config.h.example) to `firmware/esp8266_standalone_wol/config.h` and fill in your WiFi and Cloudflare details.
+   - Open [`firmware/esp8266_standalone_wol/esp8266_standalone_wol.ino`](file:///Users/janlofredy/Documents/ServerStarter/firmware/esp8266_standalone_wol/esp8266_standalone_wol.ino).
+   - Press the **ESP-RST** button on the shield right before uploading.
+   - Click **Upload**.
+   - **Switch to Run Mode**: Once flashed, switch **DIP 3 to `OFF`** and **DIP 4 to `OFF`** (DIP 1 & 2 `ON` or maintain bridge), then press **ESP-RST**. The ESP8266 will boot the standalone firmware directly!
+
+---
+
+#### 🔌 Legacy Option: Arduino Uno running AT Commands
+*(If you specifically want the Arduino Uno ATmega328P to orchestrate the ESP8266 over SoftwareSerial)*
 1. Mount the ESP8266 ESP-12E WiFi shield directly on top of the Arduino Uno.
-2. Configure shield DIP switches / jumpers:
-   - For **SoftwareSerial mode** (Uno Pins D2 as RX, D3 as TX): Set DIP switches according to the shield's pin diagram (or route jumpers from shield TX -> Uno D2, shield RX -> Uno D3).
-3. Open [`arduino_uno_esp8266_wol.ino`](file:///Users/janlofredy/Documents/ServerStarter/firmware/arduino_uno_esp8266/arduino_uno_esp8266_wol.ino).
-4. Update:
-   - `WIFI_SSID` & `WIFI_PASSWORD`
-   - `CF_HOST` (e.g. `YOUR_WORKER_SUBDOMAIN.workers.dev`)
-   - `AUTH_TOKEN` (your secret key)
-   - `SERVER_MAC` (target server's MAC address)
-5. Select **Arduino Uno** in Arduino IDE and upload.
-6. Power the Uno via a 5V USB adapter or DC barrel jack (7-12V). It operates as an AOD (Always-On Device), booting and polling automatically.
+2. Shield DIP switches: Set all to `OFF` (1: OFF, 2: OFF, 3: OFF, 4: OFF).
+3. Connect jumpers: Shield `TX` $\rightarrow$ Uno `D2`, Shield `RX` $\rightarrow$ Uno `D3`.
+4. Open [`firmware/arduino_uno_esp8266_wol/arduino_uno_esp8266_wol.ino`](file:///Users/janlofredy/Documents/ServerStarter/firmware/arduino_uno_esp8266/arduino_uno_esp8266_wol.ino).
+5. Configure credentials in `config.h`, select **Arduino Uno**, and upload.
 
 ---
 
