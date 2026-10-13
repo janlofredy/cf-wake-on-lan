@@ -3,10 +3,14 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-#if __has_include("config.h")
-  #include "config.h"
+#if defined(__has_include)
+  #if __has_include("config.h")
+    #include "config.h"
+  #else
+    #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
+  #endif
 #else
-  #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
+  #include "config.h"
 #endif
 
 #define LED_PIN 2
