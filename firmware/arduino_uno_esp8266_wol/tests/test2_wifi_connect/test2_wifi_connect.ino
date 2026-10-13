@@ -19,8 +19,10 @@
  * - CONTINUOUS SOLID ON: Wi-Fi connection FAILED (Check SSID/Password in config.h).
  */
 
-#if __has_include("../../arduino_uno_esp8266_wol/config.h")
-  #include "../../arduino_uno_esp8266_wol/config.h"
+#if __has_include("../../config.h")
+  #include "../../config.h"
+#elif __has_include("../config.h")
+  #include "../config.h"
 #elif __has_include("config.h")
   #include "config.h"
 #else

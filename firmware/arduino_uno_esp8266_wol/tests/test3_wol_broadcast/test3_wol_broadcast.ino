@@ -21,8 +21,10 @@
  * - LED on Pin 13 pulses 10 times to indicate WOL packets dispatched.
  */
 
-#if __has_include("../../arduino_uno_esp8266_wol/config.h")
-  #include "../../arduino_uno_esp8266_wol/config.h"
+#if __has_include("../../config.h")
+  #include "../../config.h"
+#elif __has_include("../config.h")
+  #include "../config.h"
 #elif __has_include("config.h")
   #include "config.h"
 #else
