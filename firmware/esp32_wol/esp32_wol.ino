@@ -196,15 +196,6 @@ void checkWOLTrigger() {
 
     if (!error) {
       bool shouldTrigger = doc["trigger"];
-      const char* customMac = doc["mac"];
-
-      // Sync MAC from Cloudflare KV if provided and valid
-      if (customMac && strlen(customMac) > 0) {
-        byte remoteMac[6];
-        if (parseMac(customMac, remoteMac)) {
-          saveTargetMac(remoteMac);
-        }
-      }
 
       if (shouldTrigger) {
         Serial.printf("[Trigger] Active Wake-on-LAN trigger detected for MAC: %s\n", activeMacStr);

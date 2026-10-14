@@ -300,7 +300,7 @@ void updateServerStatusOnCloudflare(ServerState state) {
   }
 }
 
-// Check Cloudflare for pending WOL trigger and sync remote MAC (when server is offline)
+// Check Cloudflare for pending WOL trigger (when server is offline)
 void checkWOLTrigger() {
   HTTPClient http;
   String url = "http://" + String(CF_HOST) + "/status";
@@ -311,24 +311,6 @@ void checkWOLTrigger() {
     int httpCode = http.GET();
     if (httpCode == 200) {
       String payload = http.getString();
-
-      // Check if remote configured MAC changed in Cloudflare KV
-      int macKeyIdx = payload.indexOf("\"mac\":\"");
-      if (macKeyIdx != -1) {
-        int macStart = macKeyIdx + 7;
-        int macEnd = payload.indexOf("\"", macStart);
-        if (macEnd != -1) {
-          String remoteMacStr = payload.substring(macStart, macEnd);
-          byte parsedMac[6];
-          if (remoteMacStr.length() > 0 && parseMacAddress(remoteMacStr.c_str(), parsedMac)) {
-            if (memcmp(parsedMac, activeMac, 6) != 0) {
-              Serial.printf("[STORAGE] Syncing new MAC from Cloudflare: %s\n", remoteMacStr.c_str());
-              saveMacToEEPROM(parsedMac);
-            }
-          }
-        }
-      }
-
       if (payload.indexOf("\"trigger\":true") != -1) {
         Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
         sendWOLPacket();
