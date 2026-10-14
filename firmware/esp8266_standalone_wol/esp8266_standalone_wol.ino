@@ -2,6 +2,9 @@
 #include <WiFiUdp.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <NetBIOS.h>
+#include <EEPROM.h>
 
 /**
  * ============================================================================
@@ -34,6 +37,15 @@
 // Onboard LED on ESP-12 is usually GPIO 2 (active LOW)
 #define LED_PIN 2
 
+// EEPROM Persistent Storage Configuration
+#define EEPROM_SIZE         64
+#define EEPROM_MAGIC_ADDR   0
+#define EEPROM_MAC_ADDR     1
+#define EEPROM_MAGIC_BYTE   0xA5
+
+byte activeMac[6] = {0};
+char activeMacStr[18] = "";
+
 WiFiUDP udp;
 ESP8266WebServer server(80);
 
@@ -52,6 +64,13 @@ void blinkLed(int times, int ms) {
     digitalWrite(LED_PIN, HIGH);
     delay(ms);
   }
+}
+
+// Convert 6-byte MAC array to formatted string "XX:XX:XX:XX:XX:XX"
+void macBytesToString(const byte* macBytes, char* outStr) {
+  sprintf(outStr, "%02x:%02x:%02x:%02x:%02x:%02x",
+          macBytes[0], macBytes[1], macBytes[2],
+          macBytes[3], macBytes[4], macBytes[5]);
 }
 
 // Parse MAC address string (e.g. "74:56:3C:8C:32:C4") into 6 bytes without sscanf
@@ -81,20 +100,70 @@ bool parseMacAddress(const char* macStr, byte* macBytes) {
   return (byteIdx == 6);
 }
 
-// Send Wake-on-LAN UDP magic packet (102 bytes) to subnet broadcast (e.g. 192.168.1.255:9 and 255.255.255.255:9)
+// Save MAC to persistent EEPROM storage (only writes if changed to prevent flash wear)
+bool saveMacToEEPROM(const byte* newMac) {
+  bool changed = false;
+  byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
+  if (magic != EEPROM_MAGIC_BYTE) {
+    EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_BYTE);
+    changed = true;
+  }
+
+  for (int i = 0; i < 6; i++) {
+    if (EEPROM.read(EEPROM_MAC_ADDR + i) != newMac[i]) {
+      EEPROM.write(EEPROM_MAC_ADDR + i, newMac[i]);
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    bool ok = EEPROM.commit();
+    if (ok) {
+      memcpy(activeMac, newMac, 6);
+      macBytesToString(activeMac, activeMacStr);
+      Serial.printf("[STORAGE] Target MAC saved to persistent EEPROM: %s\n", activeMacStr);
+      return true;
+    } else {
+      Serial.println(F("[STORAGE] ERROR: EEPROM commit failed!"));
+      return false;
+    }
+  }
+  return true;
+}
+
+// Load MAC from persistent EEPROM (or fallback to SERVER_MAC in config.h)
+void loadMacFromEEPROM() {
+  EEPROM.begin(EEPROM_SIZE);
+  byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
+
+  if (magic == EEPROM_MAGIC_BYTE) {
+    for (int i = 0; i < 6; i++) {
+      activeMac[i] = EEPROM.read(EEPROM_MAC_ADDR + i);
+    }
+    macBytesToString(activeMac, activeMacStr);
+    Serial.printf("[STORAGE] Loaded Target MAC from EEPROM: %s\n", activeMacStr);
+  } else {
+    Serial.println(F("[STORAGE] EEPROM uninitialized. Initializing with default SERVER_MAC from config.h..."));
+    if (parseMacAddress(SERVER_MAC, activeMac)) {
+      saveMacToEEPROM(activeMac);
+    } else {
+      Serial.println(F("[STORAGE] ERROR: Invalid default SERVER_MAC!"));
+    }
+  }
+}
+
+// Send Wake-on-LAN UDP magic packet (102 bytes) to subnet broadcast using active configured MAC
 void sendWOLPacket() {
-  Serial.printf("[WOL] Preparing Wake-on-LAN packet for MAC: %s\n", SERVER_MAC);
+  Serial.printf("[WOL] Preparing Wake-on-LAN packet for MAC: %s\n", activeMacStr);
   
   byte magicPacket[102];
   memset(magicPacket, 0xFF, 6);
 
-  byte mac[6] = {0};
-  if (parseMacAddress(SERVER_MAC, mac)) {
-    for (int i = 0; i < 16; i++) {
-      for (int m = 0; m < 6; m++) {
-        magicPacket[6 + (i * 6) + m] = mac[m];
-      }
+  for (int i = 0; i < 16; i++) {
+    for (int m = 0; m < 6; m++) {
+      magicPacket[6 + (i * 6) + m] = activeMac[m];
     }
+  }
 
     // Ensure UDP socket is initialized and bound
     udp.begin(9);
@@ -121,15 +190,19 @@ void sendWOLPacket() {
     Serial.printf("[WOL] Magic packet sent! Subnet %s:9 (ok=%d), :7 (ok=%d), 255.255.255.255:9 (ok=%d)\n", 
                   subnetBroadcast.toString().c_str(), res1, res2, res3);
     blinkLed(3, 100);
-  } else {
-    Serial.println(F("[WOL] ERROR: Failed to parse SERVER_MAC string!"));
-  }
 }
 
 void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
-  Serial.printf("[WiFi] Connecting to SSID: %s\n", WIFI_SSID);
+#ifdef DEVICE_HOSTNAME
+  WiFi.hostname(DEVICE_HOSTNAME);
+#else
+  WiFi.hostname("serverstarter");
+#endif
+
+  Serial.printf("[WiFi] Connecting to SSID: %s (Hostname: %s)...\n", 
+                WIFI_SSID, WiFi.hostname().c_str());
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
@@ -145,6 +218,20 @@ void connectWiFi() {
     digitalWrite(LED_PIN, HIGH); // Off when idle
     Serial.print(F("\n[WiFi] Connected! IP Address: "));
     Serial.println(WiFi.localIP());
+
+    // Initialize mDNS (Apple Bonjour / Linux Avahi / Windows 10+ mDNS)
+    const char* hName = WiFi.hostname().c_str();
+    if (MDNS.begin(hName)) {
+      MDNS.addService("http", "tcp", 80);
+      Serial.printf("[mDNS] Responder started: http://%s.local\n", hName);
+    } else {
+      Serial.println(F("[mDNS] Error setting up MDNS responder!"));
+    }
+
+    // Initialize NetBIOS (Windows legacy name resolution: http://<hostname>)
+    NBNS.begin(hName);
+    Serial.printf("[NetBIOS] Registered name for Windows: http://%s\n", hName);
+
     udp.begin(9); // Initialize UDP listener/sender
   } else {
     Serial.println(F("\n[WiFi] Connection timeout. Retrying later..."));
@@ -213,7 +300,7 @@ void updateServerStatusOnCloudflare(ServerState state) {
   }
 }
 
-// Check Cloudflare for pending WOL trigger (when server is offline)
+// Check Cloudflare for pending WOL trigger and sync remote MAC (when server is offline)
 void checkWOLTrigger() {
   HTTPClient http;
   String url = "http://" + String(CF_HOST) + "/status";
@@ -224,6 +311,24 @@ void checkWOLTrigger() {
     int httpCode = http.GET();
     if (httpCode == 200) {
       String payload = http.getString();
+
+      // Check if remote configured MAC changed in Cloudflare KV
+      int macKeyIdx = payload.indexOf("\"mac\":\"");
+      if (macKeyIdx != -1) {
+        int macStart = macKeyIdx + 7;
+        int macEnd = payload.indexOf("\"", macStart);
+        if (macEnd != -1) {
+          String remoteMacStr = payload.substring(macStart, macEnd);
+          byte parsedMac[6];
+          if (remoteMacStr.length() > 0 && parseMacAddress(remoteMacStr.c_str(), parsedMac)) {
+            if (memcmp(parsedMac, activeMac, 6) != 0) {
+              Serial.printf("[STORAGE] Syncing new MAC from Cloudflare: %s\n", remoteMacStr.c_str());
+              saveMacToEEPROM(parsedMac);
+            }
+          }
+        }
+      }
+
       if (payload.indexOf("\"trigger\":true") != -1) {
         Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
         sendWOLPacket();
@@ -254,7 +359,8 @@ void handleRoot() {
   String html = F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>ESP8266 WOL</title>"
                   "<style>body{font-family:sans-serif;margin:20px;background:#111;color:#eee}"
                   "h2{margin-bottom:10px}.box{background:#222;padding:15px;border-radius:6px;max-width:320px}"
-                  "p{margin:6px 0}button{background:#0284c7;color:#fff;border:none;padding:10px 18px;font-size:15px;border-radius:4px;cursor:pointer;width:100%;margin-top:10px}"
+                  "p{margin:6px 0}input{width:100%;box-sizing:border-box;padding:8px;margin-top:4px;border:1px solid #444;background:#333;color:#eee;border-radius:4px}"
+                  "button{background:#0284c7;color:#fff;border:none;padding:10px 18px;font-size:15px;border-radius:4px;cursor:pointer;width:100%;margin-top:10px}"
                   "a{color:#38bdf8}</style></head><body>"
                   "<div class='box'><h2>ESP8266 WOL Device</h2>"
                   "<p><b>Server:</b> ");
@@ -262,14 +368,31 @@ void handleRoot() {
   html += F("</p><p><b>Target IP:</b> ");
   html += SERVER_IP;
   html += F("</p><p><b>Target MAC:</b> ");
-  html += SERVER_MAC;
+  html += activeMacStr;
   html += F("</p><p><b>Free Heap:</b> ");
   html += String(ESP.getFreeHeap());
-  html += F(" bytes</p>");
+  html += F(" bytes</p><p style='font-size:12px;color:#94a3b8'><b>Access URLs:</b><br>"
+            "&bull; Mac / Linux / iOS: <a href='http://");
+  html += WiFi.hostname();
+  html += F(".local'>http://");
+  html += WiFi.hostname();
+  html += F(".local</a><br>&bull; Windows: <a href='http://");
+  html += WiFi.hostname();
+  html += F("'>http://");
+  html += WiFi.hostname();
+  html += F("</a></p>");
   if (lastWolSentEpoch > 0 && (millis() - lastWolSentEpoch < 30000)) {
     html += F("<p style='background:#0369a1;padding:8px;border-radius:4px;color:#fff;font-size:13px;margin:8px 0'>⚡ WOL Packet Sent!</p>");
   }
   html += F("<form method='POST' action='/trigger'><button type='submit'>Wake Server (Send WOL)</button></form>"
+            "<hr style='border:0;border-top:1px solid #333;margin:15px 0'>"
+            "<form method='POST' action='/update-mac'>"
+            "<p style='font-size:13px;font-weight:bold;margin-bottom:2px'>Configure Target MAC:</p>"
+            "<input type='text' name='mac' value='");
+  html += activeMacStr;
+  html += F("' maxlength='17' required pattern='^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'>"
+            "<button type='submit' style='background:#475569'>Save to Persistent Storage</button>"
+            "</form>"
             "<p style='margin-top:12px;font-size:12px'><a href='/'>Refresh</a></p>"
             "</div></body></html>");
   server.send(200, "text/html", html);
@@ -287,10 +410,26 @@ void handleManualTrigger() {
   server.send(303);
 }
 
+void handleUpdateMac() {
+  if (server.hasArg("mac")) {
+    String newMacStr = server.arg("mac");
+    newMacStr.trim();
+    byte newMac[6];
+    if (parseMacAddress(newMacStr.c_str(), newMac)) {
+      saveMacToEEPROM(newMac);
+      Serial.printf("[HTTP] Target MAC updated via web UI: %s\n", activeMacStr);
+    } else {
+      Serial.println(F("[HTTP] Invalid MAC received via web UI!"));
+    }
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
 void handleStatusJson() {
   String json = "{\"server\":\"";
   json += (currentServerState == STATE_ONLINE) ? "ONLINE" : (currentServerState == STATE_OFFLINE ? "OFFLINE" : "UNKNOWN");
-  json += "\",\"ip\":\"" + String(SERVER_IP) + "\",\"mac\":\"" + String(SERVER_MAC) + "\",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
+  json += "\",\"ip\":\"" + String(SERVER_IP) + "\",\"mac\":\"" + String(activeMacStr) + "\",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
   server.send(200, "application/json", json);
 }
 
@@ -304,11 +443,15 @@ void setup() {
   Serial.println(F("ESP8266 Standalone ServerStarter v1.0"));
   Serial.println(F("========================================"));
 
+  // Initialize and load persistent Target MAC from EEPROM
+  loadMacFromEEPROM();
+
   connectWiFi();
 
   // Start local plain HTML web server on port 80
   server.on("/", HTTP_GET, handleRoot);
   server.on("/trigger", HTTP_POST, handleManualTrigger);
+  server.on("/update-mac", HTTP_POST, handleUpdateMac);
   server.on("/status", HTTP_GET, handleStatusJson);
   server.begin();
   Serial.print(F("[Web] Local HTTP server active at: http://"));
@@ -331,6 +474,7 @@ void loop() {
 
   // Handle incoming HTTP client requests on ESP
   server.handleClient();
+  MDNS.update();
 
   unsigned long currentMillis = millis();
 

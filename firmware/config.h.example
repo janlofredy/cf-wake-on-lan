@@ -3,6 +3,7 @@
 // Wi-Fi Configuration
 #define WIFI_SSID       "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+#define DEVICE_HOSTNAME "serverstarter"  // Accessible at http://serverstarter.local (Mac/Linux/iOS/Win10+) or http://serverstarter (Windows NetBIOS/DHCP)
 
 // Cloudflare Worker Configuration
 // Example: "https://cf-wake-on-lan.your-subdomain.workers.dev"

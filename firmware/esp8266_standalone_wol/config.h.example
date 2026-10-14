@@ -18,6 +18,7 @@
 // Wi-Fi Configuration (2.4 GHz only)
 #define WIFI_SSID           "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD       "YOUR_WIFI_PASSWORD"
+#define DEVICE_HOSTNAME     "serverstarter"  // Accessible at http://serverstarter.local (Mac/Linux/iOS/Win10+) or http://serverstarter (Windows NetBIOS/DHCP)
 
 // Cloudflare Worker Configuration (Hostname ONLY, no "https://")
 #define CF_HOST             "YOUR_WORKER_SUBDOMAIN.workers.dev"

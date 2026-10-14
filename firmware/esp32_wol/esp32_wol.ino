@@ -2,6 +2,8 @@
 #include <WiFiUdp.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
+#include <ESPmDNS.h>
 
 #if defined(__has_include)
   #if __has_include("config.h")
@@ -16,7 +18,9 @@
 #define LED_PIN 2
 
 WiFiUDP udp;
-byte defaultMac[6] = DEFAULT_SERVER_MAC;
+Preferences prefs;
+byte activeMac[6] = DEFAULT_SERVER_MAC;
+char activeMacStr[18] = "";
 
 // State Memory
 enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
@@ -63,7 +67,14 @@ void sendWOL(const byte* macAddress) {
 void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
-  Serial.printf("[WiFi] Connecting to %s...\n", WIFI_SSID);
+#ifdef DEVICE_HOSTNAME
+  const char* hName = DEVICE_HOSTNAME;
+#else
+  const char* hName = "serverstarter";
+#endif
+  WiFi.setHostname(hName);
+
+  Serial.printf("[WiFi] Connecting to %s (Hostname: %s)...\n", WIFI_SSID, hName);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
@@ -78,6 +89,12 @@ void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     digitalWrite(LED_PIN, HIGH);
     Serial.println("\n[WiFi] Connected! IP: " + WiFi.localIP().toString());
+
+    // Initialize mDNS (http://<hostname>.local)
+    if (MDNS.begin(hName)) {
+      MDNS.addService("http", "tcp", 80);
+      Serial.printf("[mDNS] Device hostname active: http://%s.local\n", hName);
+    }
   } else {
     digitalWrite(LED_PIN, LOW);
     Serial.println("\n[WiFi] Failed to connect.");
@@ -123,6 +140,46 @@ void acknowledgeTrigger() {
   http.end();
 }
 
+// Convert 6-byte MAC array to formatted string "XX:XX:XX:XX:XX:XX"
+void macBytesToString(const byte* macBytes, char* outStr) {
+  sprintf(outStr, "%02x:%02x:%02x:%02x:%02x:%02x",
+          macBytes[0], macBytes[1], macBytes[2],
+          macBytes[3], macBytes[4], macBytes[5]);
+}
+
+// Save MAC to persistent flash storage via Preferences (NVS)
+bool saveTargetMac(const byte* newMac) {
+  if (memcmp(activeMac, newMac, 6) != 0) {
+    memcpy(activeMac, newMac, 6);
+    macBytesToString(activeMac, activeMacStr);
+    prefs.begin("wol_config", false);
+    prefs.putBytes("mac", activeMac, 6);
+    prefs.end();
+    Serial.printf("[STORAGE] Target MAC saved to Preferences: %s\n", activeMacStr);
+    return true;
+  }
+  return false;
+}
+
+// Load MAC from persistent storage (or fallback to DEFAULT_SERVER_MAC)
+void loadTargetMac() {
+  prefs.begin("wol_config", true);
+  size_t len = prefs.getBytes("mac", activeMac, 6);
+  prefs.end();
+
+  if (len == 6) {
+    macBytesToString(activeMac, activeMacStr);
+    Serial.printf("[STORAGE] Loaded Target MAC from Preferences: %s\n", activeMacStr);
+  } else {
+    macBytesToString(activeMac, activeMacStr);
+    Serial.printf("[STORAGE] Using default Target MAC: %s\n", activeMacStr);
+    // Persist default to NVS
+    prefs.begin("wol_config", false);
+    prefs.putBytes("mac", activeMac, 6);
+    prefs.end();
+  }
+}
+
 // Check Cloudflare Worker for WOL trigger
 void checkWOLTrigger() {
   HTTPClient http;
@@ -141,16 +198,19 @@ void checkWOLTrigger() {
       bool shouldTrigger = doc["trigger"];
       const char* customMac = doc["mac"];
 
-      if (shouldTrigger) {
-        Serial.println("[Trigger] Active Wake-on-LAN trigger detected!");
-        byte targetMac[6];
-        if (customMac && strlen(customMac) > 0 && parseMac(customMac, targetMac)) {
-          sendWOL(targetMac);
-        } else {
-          sendWOL(defaultMac);
+      // Sync MAC from Cloudflare KV if provided and valid
+      if (customMac && strlen(customMac) > 0) {
+        byte remoteMac[6];
+        if (parseMac(customMac, remoteMac)) {
+          saveTargetMac(remoteMac);
         }
+      }
+
+      if (shouldTrigger) {
+        Serial.printf("[Trigger] Active Wake-on-LAN trigger detected for MAC: %s\n", activeMacStr);
+        sendWOL(activeMac);
         delay(200);
-        sendWOL(defaultMac); // Send twice for reliability
+        sendWOL(activeMac); // Send twice for reliability
         acknowledgeTrigger();
       }
     }
@@ -163,6 +223,9 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n--- ESP32 Dual-Interval Wake-on-LAN Controller ---");
+
+  // Load persistent MAC address from flash storage
+  loadTargetMac();
 
   connectWiFi();
 }

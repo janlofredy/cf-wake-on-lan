@@ -175,7 +175,7 @@ function renderDashboardHTML(hasCfAccess = false) {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
     }
 
     .switch-info h4 {
@@ -226,6 +226,50 @@ function renderDashboardHTML(hasCfAccess = false) {
     input:checked + .slider:before {
       transform: translateX(20px);
       background-color: #0b0f19;
+    }
+
+    .config-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .config-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.6rem;
+    }
+    .config-header h4 {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .config-header span {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+    }
+    .config-input-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .config-input-row .input-field {
+      margin-bottom: 0;
+      padding: 0.6rem 0.75rem;
+      font-size: 0.85rem;
+      flex: 1;
+    }
+    .btn-sm {
+      padding: 0.6rem 1rem;
+      font-size: 0.85rem;
+      border-radius: 10px;
+      width: auto;
+      white-space: nowrap;
     }
 
     .btn-group {
@@ -422,6 +466,27 @@ function renderDashboardHTML(hasCfAccess = false) {
             <input type="checkbox" id="autoOnToggle" onchange="toggleAutoOn(this.checked)">
             <span class="slider"></span>
           </label>
+        </div>
+
+        <!-- Target MAC Address Configuration -->
+        <div class="config-card">
+          <div class="config-header">
+            <h4><span>🎯</span> Target MAC Address</h4>
+            <span id="targetMacNotice">Persistent Storage</span>
+          </div>
+          <div class="config-input-row">
+            <input 
+              type="text" 
+              id="targetMacInput" 
+              class="input-field" 
+              placeholder="00:11:22:33:44:55"
+              maxlength="17"
+              spellcheck="false"
+            />
+            <button id="saveMacBtn" class="btn btn-primary btn-sm" onclick="saveTargetMac()">
+              Save
+            </button>
+          </div>
         </div>
 
         <div class="btn-group">
@@ -652,8 +717,51 @@ function renderDashboardHTML(hasCfAccess = false) {
           lastSeen.textContent = 'Never';
         }
 
+        // Update Target MAC Input (only if user is not actively typing)
+        if (typeof data.mac !== 'undefined' && data.mac && document.activeElement !== targetMacInput) {
+          targetMacInput.value = data.mac;
+        }
+
       } catch (err) {
         console.error('fetchStatus error:', err);
+      }
+    }
+
+    async function saveTargetMac() {
+      const macVal = targetMacInput.value.trim();
+      const macPattern = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+      if (!macPattern.test(macVal)) {
+        showAlert('Invalid MAC address format. Example: 00:11:22:33:44:55', 'error');
+        return;
+      }
+
+      saveMacBtn.disabled = true;
+      saveMacBtn.textContent = 'Saving...';
+
+      try {
+        const res = await authFetch('/target', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac: macVal })
+        });
+
+        if (res.status === 401 || res.status === 403) {
+          showAuthView('Session expired or unauthorized. Please re-enter your token.');
+          return;
+        }
+
+        const data = await res.json();
+        if (data.success) {
+          showAlert('Target MAC address saved to persistent storage!', 'success');
+          fetchStatus();
+        } else {
+          showAlert(data.message || 'Failed to update target MAC', 'error');
+        }
+      } catch (e) {
+        showAlert('Network error saving target MAC address', 'error');
+      } finally {
+        saveMacBtn.disabled = false;
+        saveMacBtn.textContent = 'Save';
       }
     }
 
@@ -781,6 +889,35 @@ export default {
         );
       }
       return unauthorized("Invalid access token");
+    }
+
+    // Route: POST /target - Configure target MAC address in persistent KV storage
+    if (request.method === "POST" && url.pathname === "/target") {
+      if (!isUser && !isAOD) return unauthorized();
+      if (!isUser) return forbidden("Only User can configure target MAC address");
+
+      let body = {};
+      try { body = await request.json(); } catch(e) {}
+      const mac = (body.mac || "").trim();
+
+      const macRegex = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+      if (!macRegex.test(mac)) {
+        return new Response(
+          JSON.stringify({ success: false, message: "Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)" }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      await env.WOL_STORE.put("target_mac", mac);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          target_mac: mac,
+          message: `Target MAC address updated to ${mac}`
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
     }
 
     // Route: POST /auto-on - Allowed for authorized users
@@ -931,6 +1068,7 @@ export default {
           "GET /": "Web Dashboard UI (Secured by Token or Cloudflare Access)",
           "POST /auth/verify": "Verify authentication token",
           "GET /status": "Poll trigger & server state",
+          "POST /target": "Configure target MAC address in persistent storage",
           "POST /auto-on": "Configure Automatic Turn On",
           "POST /trigger": "Arm WOL trigger",
           "POST /ack": "Disarm trigger after WOL packet is sent (Device)",
