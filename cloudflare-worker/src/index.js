@@ -1,18 +1,19 @@
 /**
  * Cloudflare Worker for Wake-on-LAN Trigger & Dashboard UI
- * - Web UI protected by Cloudflare Access (No manual token needed in UI!)
- * - Device routes (/server/ping, /ack, /status) authenticated via AOD_DEVICE_KEY
+ * - Web UI protected by Password/Token Authentication or Cloudflare Access
+ * - Dual security: Cloudflare Access (Zero Trust) + Token Auth with auto-login & local storage
+ * - Device routes (/server/ping, /ack, /status) authenticated via secret token
  */
 
 const API_KEY = "CHANGE_ME_SECRET_TOKEN";
 
-function renderDashboardHTML() {
+function renderDashboardHTML(hasCfAccess = false) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Server Controller - YOUR_WORKER_SUBDOMAIN.workers.dev</title>
+  <title>Server Controller - Wake-on-LAN</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -65,6 +66,7 @@ function renderDashboardHTML() {
       border-radius: 20px;
       padding: 2rem;
       box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.5);
+      position: relative;
     }
 
     .header {
@@ -78,6 +80,12 @@ function renderDashboardHTML() {
       font-size: 1.35rem;
       font-weight: 700;
       letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .header-actions {
       display: flex;
       align-items: center;
       gap: 0.5rem;
@@ -105,10 +113,29 @@ function renderDashboardHTML() {
     .badge-offline .badge-dot { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
     .badge-booting { background: var(--warning-bg); color: var(--warning); }
     .badge-booting .badge-dot { background: var(--warning); animation: pulse 1.2s infinite; }
+    .badge-auth { background: rgba(56, 189, 248, 0.15); color: var(--accent); }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.4; transform: scale(1.3); }
+    }
+
+    .lock-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      border-radius: 8px;
+      padding: 0.35rem 0.6rem;
+      font-size: 0.75rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      transition: all 0.2s ease;
+    }
+    .lock-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.1);
     }
 
     .stats-grid {
@@ -249,6 +276,35 @@ function renderDashboardHTML() {
       cursor: not-allowed;
     }
 
+    .input-group {
+      margin-bottom: 1.25rem;
+    }
+    .input-label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .input-field {
+      width: 100%;
+      padding: 0.85rem 1rem;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+    }
+    .input-field:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
     .notification {
       margin-top: 1rem;
       padding: 0.75rem 1rem;
@@ -268,71 +324,135 @@ function renderDashboardHTML() {
     .notification.error { background: var(--danger-bg); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
     .notification.warning { background: var(--warning-bg); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
 
-    .cf-access-badge {
+    .security-footer {
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 0.35rem;
-      font-size: 0.7rem;
+      font-size: 0.72rem;
       color: var(--text-muted);
       margin-top: 1.25rem;
+    }
+
+    .view-section {
+      display: none;
+    }
+    .view-active {
+      display: block;
     }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="card">
-      <div class="header">
-        <div class="title">
-          <span>⚡</span> Server Controller
+      
+      <!-- ==================== VIEW 1: AUTHENTICATION LOCK VIEW ==================== -->
+      <div id="authView" class="view-section">
+        <div class="header">
+          <div class="title">
+            <span>🔒</span> Dashboard Locked
+          </div>
+          <span class="badge badge-auth">Security</span>
         </div>
-        <div id="statusBadge" class="badge badge-offline">
-          <span class="badge-dot"></span>
-          <span id="badgeText">CHECKING...</span>
+
+        <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1.25rem; line-height:1.5;">
+          Enter your Access Key or Secret Token to unlock the Wake-on-LAN server controls.
+        </p>
+
+        <form id="authForm" onsubmit="handleLogin(event)">
+          <div class="input-group">
+            <label class="input-label" for="tokenInput">Secret Access Token</label>
+            <input 
+              type="password" 
+              id="tokenInput" 
+              class="input-field" 
+              placeholder="Enter secret token..." 
+              autocomplete="current-password"
+              required
+            />
+          </div>
+
+          <button type="submit" id="unlockBtn" class="btn btn-primary">
+            <span>🔑</span> Unlock Server Controller
+          </button>
+        </form>
+
+        <div id="authAlert" class="notification"></div>
+
+        <div class="security-footer">
+          <span>🔒 Protected with Token & Role Authentication</span>
         </div>
       </div>
 
-      <div class="stats-grid">
-        <div class="stat-box">
-          <div class="stat-label">AOD Device (Uno)</div>
-          <div id="aodStatus" class="stat-value">Checking...</div>
+      <!-- ==================== VIEW 2: MAIN DASHBOARD VIEW ==================== -->
+      <div id="dashboardView" class="view-section">
+        <div class="header">
+          <div class="title">
+            <span>⚡</span> Server Controller
+          </div>
+          <div class="header-actions">
+            <div id="statusBadge" class="badge badge-offline">
+              <span class="badge-dot"></span>
+              <span id="badgeText">CHECKING...</span>
+            </div>
+            <button id="lockBtn" class="lock-btn" onclick="handleLogout()" title="Lock / Log Out">
+              <span>🔒</span> Lock
+            </button>
+          </div>
         </div>
-        <div class="stat-box">
-          <div class="stat-label">Last Ping Seen</div>
-          <div id="lastSeen" class="stat-value">--:--:--</div>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-label">AOD Device (ESP8266)</div>
+            <div id="aodStatus" class="stat-value">Checking...</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Last Ping Seen</div>
+            <div id="lastSeen" class="stat-value">--:--:--</div>
+          </div>
+        </div>
+
+        <!-- Automatic Turn On Toggle -->
+        <div class="switch-card">
+          <div class="switch-info">
+            <h4><span>🔄</span> Automatic Turn On</h4>
+            <p>Always boot server whenever it is detected offline</p>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="autoOnToggle" onchange="toggleAutoOn(this.checked)">
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="btn-group">
+          <button id="triggerBtn" class="btn btn-primary" onclick="triggerWOL(false)">
+            <span>🚀</span> Start Server (WOL)
+          </button>
+          <button id="forceTriggerBtn" class="btn btn-secondary" onclick="triggerWOL(true)">
+            Force Send WOL Packet
+          </button>
+        </div>
+
+        <div id="alertBox" class="notification"></div>
+
+        <div class="security-footer">
+          <span id="securityBadgeText">🔒 Authenticated Session Active</span>
         </div>
       </div>
 
-      <!-- Automatic Turn On Toggle -->
-      <div class="switch-card">
-        <div class="switch-info">
-          <h4><span>🔄</span> Automatic Turn On</h4>
-          <p>Always boot server whenever it is detected offline</p>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="autoOnToggle" onchange="toggleAutoOn(this.checked)">
-          <span class="slider"></span>
-        </label>
-      </div>
-
-      <div class="btn-group">
-        <button id="triggerBtn" class="btn btn-primary" onclick="triggerWOL(false)">
-          <span>🚀</span> Start Server (WOL)
-        </button>
-        <button id="forceTriggerBtn" class="btn btn-secondary" onclick="triggerWOL(true)">
-          Force Send WOL Packet
-        </button>
-      </div>
-
-      <div id="alertBox" class="notification"></div>
-
-      <div class="cf-access-badge">
-        <span>🔒 Protected by Cloudflare Access</span>
-      </div>
     </div>
   </div>
 
   <script>
+    const HAS_CF_ACCESS = ${hasCfAccess ? 'true' : 'false'};
+
+    const authView = document.getElementById('authView');
+    const dashboardView = document.getElementById('dashboardView');
+    const tokenInput = document.getElementById('tokenInput');
+    const authAlert = document.getElementById('authAlert');
+    const unlockBtn = document.getElementById('unlockBtn');
+    const lockBtn = document.getElementById('lockBtn');
+
     const statusBadge = document.getElementById('statusBadge');
     const badgeText = document.getElementById('badgeText');
     const aodStatus = document.getElementById('aodStatus');
@@ -340,6 +460,56 @@ function renderDashboardHTML() {
     const alertBox = document.getElementById('alertBox');
     const triggerBtn = document.getElementById('triggerBtn');
     const autoOnToggle = document.getElementById('autoOnToggle');
+    const securityBadgeText = document.getElementById('securityBadgeText');
+
+    let pollInterval = null;
+
+    function getSavedToken() {
+      return localStorage.getItem('wol_token') || '';
+    }
+
+    function saveToken(token) {
+      if (token) {
+        localStorage.setItem('wol_token', token.trim());
+      }
+    }
+
+    function clearToken() {
+      localStorage.removeItem('wol_token');
+    }
+
+    function showAuthView(errorMsg = '') {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+      dashboardView.classList.remove('view-active');
+      authView.classList.add('view-active');
+      if (errorMsg) {
+        authAlert.textContent = errorMsg;
+        authAlert.className = 'notification error';
+        authAlert.style.display = 'block';
+      } else {
+        authAlert.style.display = 'none';
+      }
+      tokenInput.focus();
+    }
+
+    function showDashboardView() {
+      authView.classList.remove('view-active');
+      dashboardView.classList.add('view-active');
+      if (HAS_CF_ACCESS) {
+        lockBtn.style.display = 'none';
+        securityBadgeText.textContent = '🔒 Protected by Cloudflare Access';
+      } else {
+        lockBtn.style.display = 'flex';
+        securityBadgeText.textContent = '🔒 Authenticated with Secret Token';
+      }
+      fetchStatus();
+      if (!pollInterval) {
+        pollInterval = setInterval(fetchStatus, 4000);
+      }
+    }
 
     function showAlert(msg, type = 'info') {
       alertBox.textContent = msg;
@@ -347,13 +517,70 @@ function renderDashboardHTML() {
       alertBox.style.display = 'block';
     }
 
+    // Authenticated fetch wrapper
+    async function authFetch(endpoint, options = {}) {
+      options.headers = options.headers || {};
+      const token = getSavedToken();
+      if (token && !options.headers['Authorization']) {
+        options.headers['Authorization'] = 'Bearer ' + token;
+      }
+      return fetch(endpoint, options);
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const enteredToken = tokenInput.value.trim();
+      if (!enteredToken) return;
+
+      unlockBtn.disabled = true;
+      unlockBtn.innerHTML = '<span>⏳</span> Verifying...';
+
+      try {
+        const res = await fetch('/auth/verify', {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Bearer ' + enteredToken,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (res.ok) {
+          saveToken(enteredToken);
+          tokenInput.value = '';
+          showDashboardView();
+        } else {
+          authAlert.textContent = 'Invalid access token. Please check your credentials.';
+          authAlert.className = 'notification error';
+          authAlert.style.display = 'block';
+        }
+      } catch (err) {
+        authAlert.textContent = 'Connection error. Could not verify credentials.';
+        authAlert.className = 'notification error';
+        authAlert.style.display = 'block';
+      } finally {
+        unlockBtn.disabled = false;
+        unlockBtn.innerHTML = '<span>🔑</span> Unlock Server Controller';
+      }
+    }
+
+    function handleLogout() {
+      clearToken();
+      showAuthView('Logged out. Please enter token to reconnect.');
+    }
+
     async function toggleAutoOn(enabled) {
       try {
-        const res = await fetch('/auto-on', {
+        const res = await authFetch('/auto-on', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ auto_turn_on: enabled })
         });
+
+        if (res.status === 401 || res.status === 403) {
+          showAuthView('Session expired or unauthorized. Please re-enter your token.');
+          return;
+        }
+
         const data = await res.json();
         if (data.success) {
           showAlert(data.message, 'success');
@@ -369,9 +596,14 @@ function renderDashboardHTML() {
 
     async function fetchStatus() {
       try {
-        const res = await fetch('/status');
+        const res = await authFetch('/status');
+        if (res.status === 401 || res.status === 403) {
+          showAuthView('Authentication required. Enter your token to continue.');
+          return;
+        }
+
         if (!res.ok) {
-          badgeText.textContent = "ERROR";
+          badgeText.textContent = "OFFLINE";
           statusBadge.className = "badge badge-offline";
           return;
         }
@@ -385,12 +617,14 @@ function renderDashboardHTML() {
 
         // Update Server Status Badge
         statusBadge.className = 'badge';
-        if (data.server_status === 'ONLINE') {
+        const serverStatus = (data.server_status || '').toUpperCase();
+
+        if (serverStatus === 'ONLINE') {
           statusBadge.classList.add('badge-online');
           badgeText.textContent = 'ONLINE';
           triggerBtn.disabled = true;
           triggerBtn.innerHTML = '<span>✅</span> Server is Running';
-        } else if (data.server_status === 'BOOTING' || data.trigger) {
+        } else if (serverStatus === 'BOOTING' || data.trigger) {
           statusBadge.classList.add('badge-booting');
           badgeText.textContent = 'BOOTING...';
           triggerBtn.disabled = true;
@@ -419,7 +653,7 @@ function renderDashboardHTML() {
         }
 
       } catch (err) {
-        console.error(err);
+        console.error('fetchStatus error:', err);
       }
     }
 
@@ -427,11 +661,16 @@ function renderDashboardHTML() {
       showAlert('Sending trigger request...', 'info');
 
       try {
-        const res = await fetch('/trigger', {
+        const res = await authFetch('/trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ force })
         });
+
+        if (res.status === 401 || res.status === 403) {
+          showAuthView('Session expired or unauthorized. Please re-enter your token.');
+          return;
+        }
 
         const data = await res.json();
         if (data.status === 'ALREADY_ON') {
@@ -447,8 +686,24 @@ function renderDashboardHTML() {
       }
     }
 
-    fetchStatus();
-    setInterval(fetchStatus, 4000);
+    // Auto-login initialization flow
+    (function init() {
+      // Check URL query parameters for ?token=...
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryToken = urlParams.get('token');
+
+      if (queryToken) {
+        saveToken(queryToken);
+        // Clean URL to avoid leaking token in history/bookmarks
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      if (HAS_CF_ACCESS || getSavedToken()) {
+        showDashboardView();
+      } else {
+        showAuthView();
+      }
+    })();
   </script>
 </body>
 </html>`;
@@ -464,32 +719,46 @@ export default {
     const cfAccessEmail = request.headers.get("cf-access-authenticated-user-email");
     const cfAccessJwt   = request.headers.get("cf-access-jwt-assertion");
 
-    // Device token configuration (flashed onto Arduino Uno)
-    const aodSecret = env.AOD_DEVICE_KEY || env.API_KEY || API_KEY;
+    // Device and User token configuration
+    const aodSecret  = env.AOD_DEVICE_KEY || env.API_KEY || API_KEY;
     const userSecret = env.USER_API_KEY || env.API_KEY || API_KEY;
 
-    // Extract Bearer token if provided
+    // Extract Bearer token if provided via Authorization header, URL query, or Cookie
     let clientToken = "";
     if (authHeader && authHeader.startsWith("Bearer ")) {
       clientToken = authHeader.substring(7).trim();
     } else if (tokenQuery) {
       clientToken = tokenQuery.trim();
+    } else {
+      const cookieHeader = request.headers.get("Cookie") || "";
+      const match = cookieHeader.match(/(?:^|;\s*)auth_token=([^;]+)/);
+      if (match) {
+        clientToken = decodeURIComponent(match[1]).trim();
+      }
     }
 
     // Role detection:
-    // User is authorized if:
-    // 1. Authenticated via Cloudflare Access (cfAccessEmail is present), OR
-    // 2. Presenting valid USER_API_KEY token
-    const isUser = Boolean(cfAccessEmail || cfAccessJwt || (clientToken && clientToken === userSecret));
+    // Authorized user: Valid Cloudflare Access session OR matching User/Device/API token
+    const isUser = Boolean(
+      cfAccessEmail || 
+      cfAccessJwt || 
+      (clientToken && (clientToken === userSecret || clientToken === aodSecret))
+    );
 
-    // AOD device is authorized only if presenting matching AOD_DEVICE_KEY
-    const isAOD = Boolean(clientToken && clientToken === aodSecret);
+    // Authorized AOD device: Matching AOD_DEVICE_KEY, USER_API_KEY, or API_KEY
+    const isAOD = Boolean(
+      clientToken && (clientToken === aodSecret || clientToken === userSecret)
+    );
 
-    // Web Dashboard UI at GET / (Served directly; Cloudflare Access secures the page)
+    // Web Dashboard UI at GET /
     if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return new Response(renderDashboardHTML(), {
+      const hasCfAccess = Boolean(cfAccessEmail || cfAccessJwt);
+      return new Response(renderDashboardHTML(hasCfAccess), {
         status: 200,
-        headers: { "Content-Type": "text/html; charset=utf-8" }
+        headers: { 
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
       });
     }
 
@@ -503,7 +772,18 @@ export default {
       { status: 403, headers: { "Content-Type": "application/json" } }
     );
 
-    // Route: POST /auto-on - USER ONLY (Allowed via Cloudflare Access or User Token)
+    // Route: POST /auth/verify - Verify user token or session
+    if (request.method === "POST" && url.pathname === "/auth/verify") {
+      if (isUser) {
+        return new Response(
+          JSON.stringify({ success: true, role: "USER", email: cfAccessEmail || null }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return unauthorized("Invalid access token");
+    }
+
+    // Route: POST /auto-on - Allowed for authorized users
     if (request.method === "POST" && url.pathname === "/auto-on") {
       if (!isUser && !isAOD) return unauthorized();
       if (!isUser) return forbidden("Only User can configure auto turn on");
@@ -523,7 +803,7 @@ export default {
       );
     }
 
-    // Route: GET /status - Read state (Accessible by logged-in User or AOD Device)
+    // Route: GET /status - Read state (Accessible by authenticated User or AOD Device)
     if (request.method === "GET" && url.pathname === "/status") {
       if (!isUser && !isAOD) return unauthorized();
 
@@ -537,7 +817,7 @@ export default {
 
       // AUTOMATIC TURN ON LOGIC:
       let shouldTrigger = (pending === "true" || pending === "1");
-      if (autoOn && serverStatus === "OFFLINE" && !shouldTrigger) {
+      if (autoOn && serverStatus.toUpperCase() === "OFFLINE" && !shouldTrigger) {
         shouldTrigger = true;
         await env.WOL_STORE.put("trigger_wol", "true");
         await env.WOL_STORE.put("server_status", "BOOTING");
@@ -566,7 +846,7 @@ export default {
       );
     }
 
-    // Route: POST /trigger - USER ONLY (Allowed via Cloudflare Access or User Token)
+    // Route: POST /trigger - Allowed for authorized users
     if (request.method === "POST" && url.pathname === "/trigger") {
       if (!isUser && !isAOD) return unauthorized();
       if (!isUser) return forbidden("Only User can trigger Wake-on-LAN");
@@ -575,7 +855,7 @@ export default {
       try { reqData = await request.json(); } catch (e) {}
 
       const force = reqData.force === true;
-      const currentStatus = await env.WOL_STORE.get("server_status");
+      const currentStatus = (await env.WOL_STORE.get("server_status") || "").toUpperCase();
 
       if (currentStatus === "ONLINE" && !force) {
         return new Response(
@@ -606,10 +886,9 @@ export default {
       );
     }
 
-    // Route: POST /ack - AOD DEVICE ONLY
+    // Route: POST /ack - Microcontroller acknowledges WOL dispatch
     if (request.method === "POST" && url.pathname === "/ack") {
       if (!isUser && !isAOD) return unauthorized();
-      if (!isAOD) return forbidden("Only AOD device token can acknowledge triggers");
 
       let body = {};
       try { body = await request.json(); } catch(e) {}
@@ -628,10 +907,9 @@ export default {
       );
     }
 
-    // Route: POST /server/ping - AOD DEVICE ONLY
+    // Route: POST /server/ping - Microcontroller reports reachability
     if (request.method === "POST" && url.pathname === "/server/ping") {
       if (!isUser && !isAOD) return unauthorized();
-      if (!isAOD) return forbidden("Only AOD device token can report server reachability");
 
       let body = {};
       try { body = await request.json(); } catch(e) {}
@@ -650,12 +928,13 @@ export default {
     return new Response(
       JSON.stringify({
         endpoints: {
-          "GET /": "Web Dashboard UI (Cloudflare Access secured)",
+          "GET /": "Web Dashboard UI (Secured by Token or Cloudflare Access)",
+          "POST /auth/verify": "Verify authentication token",
           "GET /status": "Poll trigger & server state",
           "POST /auto-on": "Configure Automatic Turn On",
           "POST /trigger": "Arm WOL trigger",
-          "POST /ack": "Disarm trigger after WOL packet is sent (Device only)",
-          "POST /server/ping": "Report server online/offline (Device only)"
+          "POST /ack": "Disarm trigger after WOL packet is sent (Device)",
+          "POST /server/ping": "Report server reachability (Device)"
         }
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
