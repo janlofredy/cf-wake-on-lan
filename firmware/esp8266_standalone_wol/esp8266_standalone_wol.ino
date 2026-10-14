@@ -103,23 +103,23 @@ void sendWOLPacket() {
     IPAddress subnetBroadcast = ~WiFi.subnetMask() | WiFi.localIP();
     IPAddress limitedBroadcast(255, 255, 255, 255);
 
-    // Send to Subnet Broadcast on Port 9
+    // 1. Send to Subnet Broadcast on Port 9
     udp.beginPacket(subnetBroadcast, 9);
     udp.write(magicPacket, sizeof(magicPacket));
-    udp.endPacket();
+    int res1 = udp.endPacket();
 
-    // Send to Subnet Broadcast on Port 7
+    // 2. Send to Subnet Broadcast on Port 7
     udp.beginPacket(subnetBroadcast, 7);
     udp.write(magicPacket, sizeof(magicPacket));
-    udp.endPacket();
+    int res2 = udp.endPacket();
 
-    // Also send to 255.255.255.255 on Port 9
+    // 3. Also send to 255.255.255.255 on Port 9
     udp.beginPacket(limitedBroadcast, 9);
     udp.write(magicPacket, sizeof(magicPacket));
-    udp.endPacket();
+    int res3 = udp.endPacket();
 
-    Serial.printf("[WOL] Magic packet transmitted to %s (Broadcast: %s:9 & :7)!\n", 
-                  SERVER_MAC, subnetBroadcast.toString().c_str());
+    Serial.printf("[WOL] Magic packet sent! Subnet %s:9 (ok=%d), :7 (ok=%d), 255.255.255.255:9 (ok=%d)\n", 
+                  subnetBroadcast.toString().c_str(), res1, res2, res3);
     blinkLed(3, 100);
   } else {
     Serial.println(F("[WOL] ERROR: Failed to parse SERVER_MAC string!"));
@@ -242,8 +242,11 @@ void handleRoot() {
   html += SERVER_MAC;
   html += F("</p><p><b>Free Heap:</b> ");
   html += String(ESP.getFreeHeap());
-  html += F(" bytes</p>"
-            "<form method='POST' action='/trigger'><button type='submit'>Wake Server (Send WOL)</button></form>"
+  html += F(" bytes</p>");
+  if (lastWolSentEpoch > 0 && (millis() - lastWolSentEpoch < 30000)) {
+    html += F("<p style='background:#0369a1;padding:8px;border-radius:4px;color:#fff;font-size:13px;margin:8px 0'>⚡ WOL Packet Sent!</p>");
+  }
+  html += F("<form method='POST' action='/trigger'><button type='submit'>Wake Server (Send WOL)</button></form>"
             "<p style='margin-top:12px;font-size:12px'><a href='/'>Refresh</a></p>"
             "</div></body></html>");
   server.send(200, "text/html", html);
