@@ -81,9 +81,9 @@ bool parseMacAddress(const char* macStr, byte* macBytes) {
   return (byteIdx == 6);
 }
 
-// Send Wake-on-LAN UDP magic packet (102 bytes) to 255.255.255.255:9
+// Send Wake-on-LAN UDP magic packet (102 bytes) to subnet broadcast (e.g. 192.168.1.255:9 and 255.255.255.255:9)
 void sendWOLPacket() {
-  Serial.println(F("[WOL] Sending Wake-on-LAN magic packet..."));
+  Serial.printf("[WOL] Preparing Wake-on-LAN packet for MAC: %s\n", SERVER_MAC);
   
   byte magicPacket[102];
   memset(magicPacket, 0xFF, 6);
@@ -96,12 +96,30 @@ void sendWOLPacket() {
       }
     }
 
-    IPAddress broadcastIp(255, 255, 255, 255);
-    udp.beginPacket(broadcastIp, 9);
+    // Ensure UDP socket is initialized and bound
+    udp.begin(9);
+
+    // Calculate subnet directed broadcast (e.g. 192.168.1.255)
+    IPAddress subnetBroadcast = ~WiFi.subnetMask() | WiFi.localIP();
+    IPAddress limitedBroadcast(255, 255, 255, 255);
+
+    // Send to Subnet Broadcast on Port 9
+    udp.beginPacket(subnetBroadcast, 9);
     udp.write(magicPacket, sizeof(magicPacket));
     udp.endPacket();
 
-    Serial.println(F("[WOL] Magic packet transmitted successfully!"));
+    // Send to Subnet Broadcast on Port 7
+    udp.beginPacket(subnetBroadcast, 7);
+    udp.write(magicPacket, sizeof(magicPacket));
+    udp.endPacket();
+
+    // Also send to 255.255.255.255 on Port 9
+    udp.beginPacket(limitedBroadcast, 9);
+    udp.write(magicPacket, sizeof(magicPacket));
+    udp.endPacket();
+
+    Serial.printf("[WOL] Magic packet transmitted to %s (Broadcast: %s:9 & :7)!\n", 
+                  SERVER_MAC, subnetBroadcast.toString().c_str());
     blinkLed(3, 100);
   } else {
     Serial.println(F("[WOL] ERROR: Failed to parse SERVER_MAC string!"));
@@ -127,6 +145,7 @@ void connectWiFi() {
     digitalWrite(LED_PIN, HIGH); // Off when idle
     Serial.print(F("\n[WiFi] Connected! IP Address: "));
     Serial.println(WiFi.localIP());
+    udp.begin(9); // Initialize UDP listener/sender
   } else {
     Serial.println(F("\n[WiFi] Connection timeout. Retrying later..."));
   }
@@ -143,7 +162,7 @@ bool probeServer() {
   return false;
 }
 
-// Update server status on Cloudflare Worker (via plain HTTP for ESP8266 Core 2.3.0)
+// Update server status on Cloudflare Worker (via plain HTTP for Core 2.3.0 stability)
 void updateServerStatusOnCloudflare(ServerState state) {
   HTTPClient http;
   String url = "http://" + String(CF_HOST) + "/server/ping";
@@ -155,8 +174,7 @@ void updateServerStatusOnCloudflare(ServerState state) {
     String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
     String payload   = "{\"status\":\"" + statusStr + "\"}";
 
-    Serial.printf("[CF] Syncing state '%s' to %s (Free Heap: %u)...\n", 
-                  statusStr.c_str(), url.c_str(), ESP.getFreeHeap());
+    Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
     int httpCode = http.POST(payload);
 
     if (httpCode > 0) {
@@ -167,6 +185,8 @@ void updateServerStatusOnCloudflare(ServerState state) {
                     httpCode, http.errorToString(httpCode).c_str());
     }
     http.end();
+  } else {
+    Serial.println(F("[CF] Failed to connect HTTP client."));
   }
 }
 
@@ -198,6 +218,9 @@ void checkWOLTrigger() {
           Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
         }
       }
+    } else if (httpCode < 0) {
+      Serial.printf("[TRIGGER] HTTP GET failed, code: %d (%s)\n", 
+                    httpCode, http.errorToString(httpCode).c_str());
     }
     http.end();
   }
