@@ -1,7 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
 #include <ESP8266WebServer.h>
 
 /**
@@ -82,9 +81,9 @@ bool parseMacAddress(const char* macStr, byte* macBytes) {
   return (byteIdx == 6);
 }
 
-// Send Wake-on-LAN UDP magic packet (102 bytes) to 255.255.255.255:9
+// Send Wake-on-LAN UDP magic packet (102 bytes) to subnet broadcast (e.g. 192.168.1.255:9 and 255.255.255.255:9)
 void sendWOLPacket() {
-  Serial.println(F("[WOL] Sending Wake-on-LAN magic packet..."));
+  Serial.printf("[WOL] Preparing Wake-on-LAN packet for MAC: %s\n", SERVER_MAC);
   
   byte magicPacket[102];
   memset(magicPacket, 0xFF, 6);
@@ -97,12 +96,30 @@ void sendWOLPacket() {
       }
     }
 
-    IPAddress broadcastIp(255, 255, 255, 255);
-    udp.beginPacket(broadcastIp, 9);
+    // Ensure UDP socket is initialized and bound
+    udp.begin(9);
+
+    // Calculate subnet directed broadcast (e.g. 192.168.1.255)
+    IPAddress subnetBroadcast = ~WiFi.subnetMask() | WiFi.localIP();
+    IPAddress limitedBroadcast(255, 255, 255, 255);
+
+    // Send to Subnet Broadcast on Port 9
+    udp.beginPacket(subnetBroadcast, 9);
     udp.write(magicPacket, sizeof(magicPacket));
     udp.endPacket();
 
-    Serial.println(F("[WOL] Magic packet transmitted successfully!"));
+    // Send to Subnet Broadcast on Port 7
+    udp.beginPacket(subnetBroadcast, 7);
+    udp.write(magicPacket, sizeof(magicPacket));
+    udp.endPacket();
+
+    // Also send to 255.255.255.255 on Port 9
+    udp.beginPacket(limitedBroadcast, 9);
+    udp.write(magicPacket, sizeof(magicPacket));
+    udp.endPacket();
+
+    Serial.printf("[WOL] Magic packet transmitted to %s (Broadcast: %s:9 & :7)!\n", 
+                  SERVER_MAC, subnetBroadcast.toString().c_str());
     blinkLed(3, 100);
   } else {
     Serial.println(F("[WOL] ERROR: Failed to parse SERVER_MAC string!"));
@@ -128,6 +145,7 @@ void connectWiFi() {
     digitalWrite(LED_PIN, HIGH); // Off when idle
     Serial.print(F("\n[WiFi] Connected! IP Address: "));
     Serial.println(WiFi.localIP());
+    udp.begin(9); // Initialize UDP listener/sender
   } else {
     Serial.println(F("\n[WiFi] Connection timeout. Retrying later..."));
   }
@@ -144,59 +162,68 @@ bool probeServer() {
   return false;
 }
 
-// Update server status on Cloudflare Worker
+// Update server status on Cloudflare Worker (via plain HTTP for Core 2.3.0 stability)
 void updateServerStatusOnCloudflare(ServerState state) {
   HTTPClient http;
-  String url = "https://" + String(CF_HOST) + "/server/ping";
+  String url = "http://" + String(CF_HOST) + "/server/ping";
 
-  http.begin(url);
-  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-  http.addHeader("Content-Type", "application/json");
+  if (http.begin(url)) {
+    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+    http.addHeader("Content-Type", "application/json");
 
-  String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
-  String payload   = "{\"status\":\"" + statusStr + "\"}";
+    String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
+    String payload   = "{\"status\":\"" + statusStr + "\"}";
 
-  Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
-  int httpCode = http.POST(payload);
+    Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
+    int httpCode = http.POST(payload);
 
-  if (httpCode > 0) {
-    Serial.printf("[CF] Response: %d\n", httpCode);
-    lastSentServerState = state;
+    if (httpCode > 0) {
+      Serial.printf("[CF] Response: %d\n", httpCode);
+      lastSentServerState = state;
+    } else {
+      Serial.printf("[CF] HTTP POST failed, code: %d (%s)\n", 
+                    httpCode, http.errorToString(httpCode).c_str());
+    }
+    http.end();
   } else {
-    Serial.printf("[CF] HTTP POST failed, code: %d\n", httpCode);
+    Serial.println(F("[CF] Failed to connect HTTP client."));
   }
-  http.end();
 }
 
 // Check Cloudflare for pending WOL trigger (when server is offline)
 void checkWOLTrigger() {
   HTTPClient http;
-  String url = "https://" + String(CF_HOST) + "/status";
+  String url = "http://" + String(CF_HOST) + "/status";
 
-  http.begin(url);
-  http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+  if (http.begin(url)) {
+    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
 
-  int httpCode = http.GET();
-  if (httpCode == 200) {
-    String payload = http.getString();
-    if (payload.indexOf("\"trigger\":true") != -1) {
-      Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
-      sendWOLPacket();
-      delay(300);
-      sendWOLPacket();
+    int httpCode = http.GET();
+    if (httpCode == 200) {
+      String payload = http.getString();
+      if (payload.indexOf("\"trigger\":true") != -1) {
+        Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
+        sendWOLPacket();
+        delay(300);
+        sendWOLPacket();
 
-      // Acknowledge trigger
-      HTTPClient ackHttp;
-      String ackUrl = "https://" + String(CF_HOST) + "/ack";
-      ackHttp.begin(ackUrl);
-      ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-      ackHttp.addHeader("Content-Type", "application/json");
-      ackHttp.POST("{\"result\":\"SENT\"}");
-      ackHttp.end();
-      Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
+        // Acknowledge trigger
+        HTTPClient ackHttp;
+        String ackUrl = "http://" + String(CF_HOST) + "/ack";
+        if (ackHttp.begin(ackUrl)) {
+          ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
+          ackHttp.addHeader("Content-Type", "application/json");
+          ackHttp.POST("{\"result\":\"SENT\"}");
+          ackHttp.end();
+          Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
+        }
+      }
+    } else if (httpCode < 0) {
+      Serial.printf("[TRIGGER] HTTP GET failed, code: %d (%s)\n", 
+                    httpCode, http.errorToString(httpCode).c_str());
     }
+    http.end();
   }
-  http.end();
 }
 
 // Local ESP8266 Web Server handlers (Ultra-lightweight plain HTML for low storage & RAM)
