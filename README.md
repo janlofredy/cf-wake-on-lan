@@ -144,9 +144,16 @@ Instead of dealing with flaky factory AT firmware, baud rate mismatches, and `So
    - Connect Shield **`RX` / `RXD`** $\rightarrow$ Arduino Uno **`D0` (RX)** (or D1 depending on shield routing).
    - *Note*: Because the Uno MCU is bypassed, connect `TX` to `TX` and `RX` to `RX` so the USB-Serial bridge routes directly to the ESP.
 
-4. **Arduino IDE Setup**:
-   - Go to **Boards Manager** and install **`esp8266 by ESP8266 Community`** (version 2.7.4 or 3.x).
-   - Select Board: **`Generic ESP8266 Module`**.
+4. **Arduino IDE Setup & ESP8266 Board Package**:
+   - Add the ESP8266 Board Manager URL in Arduino IDE:
+     - Open **File > Preferences** (Windows/Linux) or **Arduino IDE > Settings / Preferences** (macOS).
+     - Under **"Additional Boards Manager URLs"**, add:
+       ```
+       http://arduino.esp8266.com/stable/package_esp8266com_index.json
+       ```
+       *(If you already have URLs listed, separate them with a comma or add it to a new line).*
+   - Open **Tools > Board > Boards Manager...**, search for **`esp8266`**, and install **`esp8266 by ESP8266 Community`** (version 2.7.4 or 3.x).
+   - Select Board: **`Tools > Board > ESP8266 Boards > Generic ESP8266 Module`**.
    - Flash Size: **`4MB (FS:2MB OTA:~1019KB)`** (or `512KB` depending on your ESP-12 chip variant).
    - Upload Speed: **`115200`**.
 
