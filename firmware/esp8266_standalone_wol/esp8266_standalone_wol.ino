@@ -151,14 +151,37 @@ void connectWiFi() {
   }
 }
 
-// Probe local target server availability via TCP socket (port 22 / SSH)
+// Probe local target server availability via TCP socket
 bool probeServer() {
+  IPAddress ip;
+  bool isIp = ip.fromString(SERVER_IP);
+
   WiFiClient client;
-  client.setTimeout(1000);
-  if (client.connect(SERVER_IP, SERVER_PORT)) {
+  client.setTimeout(2000); // 2 second timeout
+
+  bool connected = false;
+  if (isIp) {
+    connected = client.connect(ip, SERVER_PORT);
+  } else {
+    connected = client.connect(SERVER_IP, SERVER_PORT);
+  }
+
+  if (connected) {
     client.stop();
+    Serial.printf("[PROBE] %s:%d -> ONLINE\n", SERVER_IP, SERVER_PORT);
     return true;
   }
+
+  // Windows fallback: If checking port 22 (SSH) and it failed, try port 445 (Windows SMB)
+  if (SERVER_PORT == 22) {
+    if (isIp ? client.connect(ip, 445) : client.connect(SERVER_IP, 445)) {
+      client.stop();
+      Serial.printf("[PROBE] %s:445 (Windows SMB) -> ONLINE\n", SERVER_IP);
+      return true;
+    }
+  }
+
+  Serial.printf("[PROBE] %s:%d -> OFFLINE\n", SERVER_IP, SERVER_PORT);
   return false;
 }
 
@@ -290,6 +313,13 @@ void setup() {
   server.begin();
   Serial.print(F("[Web] Local HTTP server active at: http://"));
   Serial.println(WiFi.localIP());
+
+  // Probe target server immediately upon boot so state is not UNKNOWN
+  bool isOnline = probeServer();
+  currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
+  lastSentServerState = currentServerState;
+  lastServerCheckTime = millis();
+  updateServerStatusOnCloudflare(currentServerState);
 }
 
 void loop() {
