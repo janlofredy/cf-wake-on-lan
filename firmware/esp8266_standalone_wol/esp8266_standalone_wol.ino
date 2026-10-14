@@ -1,7 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
 #include <ESP8266WebServer.h>
 
 /**
@@ -144,23 +143,12 @@ bool probeServer() {
   return false;
 }
 
-// Update server status on Cloudflare Worker
+// Update server status on Cloudflare Worker (via plain HTTP for ESP8266 Core 2.3.0)
 void updateServerStatusOnCloudflare(ServerState state) {
-  WiFiClientSecure client;
-  client.setInsecure(); // Required for HTTPS on ESP8266
-  #if defined(ESP8266)
-  client.setBufferSizes(512, 512); // Conserve RAM for BearSSL
-  #endif
-  client.setTimeout(8000);
-
   HTTPClient http;
-  String url = "https://" + String(CF_HOST) + "/server/ping";
+  String url = "http://" + String(CF_HOST) + "/server/ping";
 
-  #if defined(ESP8266)
-  if (http.begin(client, url)) {
-  #else
   if (http.begin(url)) {
-  #endif
     http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
     http.addHeader("Content-Type", "application/json");
 
@@ -184,21 +172,10 @@ void updateServerStatusOnCloudflare(ServerState state) {
 
 // Check Cloudflare for pending WOL trigger (when server is offline)
 void checkWOLTrigger() {
-  WiFiClientSecure client;
-  client.setInsecure();
-  #if defined(ESP8266)
-  client.setBufferSizes(512, 512);
-  #endif
-  client.setTimeout(8000);
-
   HTTPClient http;
-  String url = "https://" + String(CF_HOST) + "/status";
+  String url = "http://" + String(CF_HOST) + "/status";
 
-  #if defined(ESP8266)
-  if (http.begin(client, url)) {
-  #else
   if (http.begin(url)) {
-  #endif
     http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
 
     int httpCode = http.GET();
@@ -212,12 +189,8 @@ void checkWOLTrigger() {
 
         // Acknowledge trigger
         HTTPClient ackHttp;
-        String ackUrl = "https://" + String(CF_HOST) + "/ack";
-        #if defined(ESP8266)
-        if (ackHttp.begin(client, ackUrl)) {
-        #else
+        String ackUrl = "http://" + String(CF_HOST) + "/ack";
         if (ackHttp.begin(ackUrl)) {
-        #endif
           ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
           ackHttp.addHeader("Content-Type", "application/json");
           ackHttp.POST("{\"result\":\"SENT\"}");

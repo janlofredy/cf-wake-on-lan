@@ -155,8 +155,8 @@ void acknowledgeTrigger() {
 
 // Update Server status on Cloudflare
 void updateServerStatusOnCloudflare(ServerState state) {
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (sendCommand(startSSL, 5000, "OK")) {
+  String startTCP = "AT+CIPSTART=\"TCP\",\"" + String(CF_HOST) + "\",80";
+  if (sendCommand(startTCP, 5000, "OK")) {
     String statusStr = (state == STATE_ONLINE) ? "ONLINE" : "OFFLINE";
     String body = "{\"status\":\"" + statusStr + "\"}";
 
@@ -184,8 +184,8 @@ void updateServerStatusOnCloudflare(ServerState state) {
 
 // Check Cloudflare for pending WOL trigger (when server is OFF)
 void checkWOLTrigger() {
-  String startSSL = "AT+CIPSTART=\"SSL\",\"" + String(CF_HOST) + "\",443";
-  if (!sendCommand(startSSL, 5000, "OK")) {
+  String startTCP = "AT+CIPSTART=\"TCP\",\"" + String(CF_HOST) + "\",80";
+  if (!sendCommand(startTCP, 5000, "OK")) {
     return;
   }
 
