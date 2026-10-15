@@ -37,13 +37,15 @@
 #define LED_PIN 2
 
 // EEPROM Persistent Storage Configuration
-#define EEPROM_SIZE         64
+#define EEPROM_SIZE         96
 #define EEPROM_MAGIC_ADDR   0
-#define EEPROM_MAC_ADDR     1
-#define EEPROM_MAGIC_BYTE   0xA5
+#define EEPROM_MAC_ADDR     1   // 6 bytes (1..6)
+#define EEPROM_IP_ADDR      8   // up to 16 bytes string (8..23)
+#define EEPROM_MAGIC_BYTE   0xA6 // Changed to 0xA6 to initialize new IP layout alongside MAC
 
 byte activeMac[6] = {0};
 char activeMacStr[18] = "";
+char activeServerIp[16] = "";
 
 WiFiUDP udp;
 ESP8266WebServer server(80);
@@ -99,6 +101,39 @@ bool parseMacAddress(const char* macStr, byte* macBytes) {
   return (byteIdx == 6);
 }
 
+// Save IP to persistent EEPROM storage (only writes if changed to prevent flash wear)
+bool saveIpToEEPROM(const char* newIp) {
+  bool changed = false;
+  byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
+  if (magic != EEPROM_MAGIC_BYTE) {
+    EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_BYTE);
+    changed = true;
+  }
+
+  for (int i = 0; i < 16; i++) {
+    char c = newIp[i];
+    if (EEPROM.read(EEPROM_IP_ADDR + i) != (byte)c) {
+      EEPROM.write(EEPROM_IP_ADDR + i, (byte)c);
+      changed = true;
+    }
+    if (c == '\0') break;
+  }
+
+  if (changed) {
+    bool ok = EEPROM.commit();
+    if (ok) {
+      strncpy(activeServerIp, newIp, sizeof(activeServerIp) - 1);
+      activeServerIp[sizeof(activeServerIp) - 1] = '\0';
+      Serial.printf("[STORAGE] Target IP saved to persistent EEPROM: %s\n", activeServerIp);
+      return true;
+    } else {
+      Serial.println(F("[STORAGE] ERROR: EEPROM commit for IP failed!"));
+      return false;
+    }
+  }
+  return true;
+}
+
 // Save MAC to persistent EEPROM storage (only writes if changed to prevent flash wear)
 bool saveMacToEEPROM(const byte* newMac) {
   bool changed = false;
@@ -130,24 +165,46 @@ bool saveMacToEEPROM(const byte* newMac) {
   return true;
 }
 
-// Load MAC from persistent EEPROM (or fallback to SERVER_MAC in config.h)
-void loadMacFromEEPROM() {
+// Load MAC and IP from persistent EEPROM (or fallback to SERVER_MAC and SERVER_IP in config.h)
+void loadConfigFromEEPROM() {
   EEPROM.begin(EEPROM_SIZE);
   byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
 
   if (magic == EEPROM_MAGIC_BYTE) {
+    // 1. Load MAC
     for (int i = 0; i < 6; i++) {
       activeMac[i] = EEPROM.read(EEPROM_MAC_ADDR + i);
     }
     macBytesToString(activeMac, activeMacStr);
     Serial.printf("[STORAGE] Loaded Target MAC from EEPROM: %s\n", activeMacStr);
+
+    // 2. Load IP
+    bool validIpChar = true;
+    for (int i = 0; i < 16; i++) {
+      char c = (char)EEPROM.read(EEPROM_IP_ADDR + i);
+      activeServerIp[i] = c;
+      if (c == '\0') break;
+      if (!((c >= '0' && c <= '9') || c == '.')) validIpChar = false;
+    }
+    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
+
+    if (!validIpChar || strlen(activeServerIp) < 7) {
+      Serial.println(F("[STORAGE] Invalid IP in EEPROM. Falling back to SERVER_IP from config.h..."));
+      strncpy(activeServerIp, SERVER_IP, sizeof(activeServerIp) - 1);
+      saveIpToEEPROM(activeServerIp);
+    } else {
+      Serial.printf("[STORAGE] Loaded Target IP from EEPROM: %s\n", activeServerIp);
+    }
   } else {
-    Serial.println(F("[STORAGE] EEPROM uninitialized. Initializing with default SERVER_MAC from config.h..."));
+    Serial.println(F("[STORAGE] EEPROM uninitialized. Initializing with fallback defaults from config.h..."));
     if (parseMacAddress(SERVER_MAC, activeMac)) {
       saveMacToEEPROM(activeMac);
     } else {
       Serial.println(F("[STORAGE] ERROR: Invalid default SERVER_MAC!"));
     }
+    strncpy(activeServerIp, SERVER_IP, sizeof(activeServerIp) - 1);
+    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
+    saveIpToEEPROM(activeServerIp);
   }
 }
 
@@ -192,8 +249,7 @@ void sendWOLPacket() {
 }
 
 void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-
+  WiFi.mode(WIFI_STA);
 #ifdef DEVICE_HOSTNAME
   WiFi.hostname(DEVICE_HOSTNAME);
 #else
@@ -202,7 +258,6 @@ void connectWiFi() {
 
   Serial.printf("[WiFi] Connecting to SSID: %s (Hostname: %s)...\n", 
                 WIFI_SSID, WiFi.hostname().c_str());
-  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int attempts = 0;
@@ -218,15 +273,6 @@ void connectWiFi() {
     Serial.print(F("\n[WiFi] Connected! IP Address: "));
     Serial.println(WiFi.localIP());
 
-    // Initialize mDNS (Apple Bonjour / Linux Avahi / Windows 10+ mDNS)
-    const char* hName = WiFi.hostname().c_str();
-    if (MDNS.begin(hName)) {
-      MDNS.addService("http", "tcp", 80);
-      Serial.printf("[mDNS] Responder started: http://%s.local\n", hName);
-    } else {
-      Serial.println(F("[mDNS] Error setting up MDNS responder!"));
-    }
-
     udp.begin(9); // Initialize UDP listener/sender
   } else {
     Serial.println(F("\n[WiFi] Connection timeout. Retrying later..."));
@@ -236,7 +282,7 @@ void connectWiFi() {
 // Probe local target server availability via TCP socket
 bool probeServer() {
   IPAddress ip;
-  bool isIp = ip.fromString(SERVER_IP);
+  bool isIp = ip.fromString(activeServerIp);
 
   WiFiClient client;
   client.setTimeout(2000); // 2 second timeout
@@ -245,25 +291,25 @@ bool probeServer() {
   if (isIp) {
     connected = client.connect(ip, SERVER_PORT);
   } else {
-    connected = client.connect(SERVER_IP, SERVER_PORT);
+    connected = client.connect(activeServerIp, SERVER_PORT);
   }
 
   if (connected) {
     client.stop();
-    Serial.printf("[PROBE] %s:%d -> ONLINE\n", SERVER_IP, SERVER_PORT);
+    Serial.printf("[PROBE] %s:%d -> ONLINE\n", activeServerIp, SERVER_PORT);
     return true;
   }
 
   // Windows fallback: If checking port 22 (SSH) and it failed, try port 445 (Windows SMB)
   if (SERVER_PORT == 22) {
-    if (isIp ? client.connect(ip, 445) : client.connect(SERVER_IP, 445)) {
+    if (isIp ? client.connect(ip, 445) : client.connect(activeServerIp, 445)) {
       client.stop();
-      Serial.printf("[PROBE] %s:445 (Windows SMB) -> ONLINE\n", SERVER_IP);
+      Serial.printf("[PROBE] %s:445 (Windows SMB) -> ONLINE\n", activeServerIp);
       return true;
     }
   }
 
-  Serial.printf("[PROBE] %s:%d -> OFFLINE\n", SERVER_IP, SERVER_PORT);
+  Serial.printf("[PROBE] %s:%d -> OFFLINE\n", activeServerIp, SERVER_PORT);
   return false;
 }
 
@@ -343,27 +389,33 @@ void handleRoot() {
                   "<p><b>Server:</b> ");
   html += (currentServerState == STATE_ONLINE) ? F("<span style='color:#4ade80'>ONLINE</span>") : (currentServerState == STATE_OFFLINE ? F("<span style='color:#f87171'>OFFLINE</span>") : F("UNKNOWN"));
   html += F("</p><p><b>Target IP:</b> ");
-  html += SERVER_IP;
+  html += activeServerIp;
   html += F("</p><p><b>Target MAC:</b> ");
   html += activeMacStr;
   html += F("</p><p><b>Free Heap:</b> ");
   html += String(ESP.getFreeHeap());
-  html += F(" bytes</p><p style='font-size:12px;color:#94a3b8'><b>Local URL:</b> "
+  html += F(" bytes</p><p style='font-size:12px;color:#94a3b8'><b>Hostname:</b> "
             "<a href='http://");
   html += WiFi.hostname();
   html += F(".local'>http://");
   html += WiFi.hostname();
-  html += F(".local</a></p>");
+  html += F(".local</a><br><small>(or via IP: http://");
+  html += WiFi.localIP().toString();
+  html += F(")</small></p>");
   if (lastWolSentEpoch > 0 && (millis() - lastWolSentEpoch < 30000)) {
     html += F("<p style='background:#0369a1;padding:8px;border-radius:4px;color:#fff;font-size:13px;margin:8px 0'>⚡ WOL Packet Sent!</p>");
   }
   html += F("<form method='POST' action='/trigger'><button type='submit'>Wake Server (Send WOL)</button></form>"
             "<hr style='border:0;border-top:1px solid #333;margin:15px 0'>"
-            "<form method='POST' action='/update-mac'>"
+            "<form method='POST' action='/update-config'>"
             "<p style='font-size:13px;font-weight:bold;margin-bottom:2px'>Configure Target MAC:</p>"
             "<input type='text' name='mac' value='");
   html += activeMacStr;
   html += F("' maxlength='17' required pattern='^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'>"
+            "<p style='font-size:13px;font-weight:bold;margin:10px 0 2px'>Configure Target IP:</p>"
+            "<input type='text' name='ip' value='");
+  html += activeServerIp;
+  html += F("' maxlength='15' required pattern='^([0-9]{1,3}\\.){3}[0-9]{1,3}$'>"
             "<button type='submit' style='background:#475569'>Save to Persistent Storage</button>"
             "</form>"
             "<p style='margin-top:12px;font-size:12px'><a href='/'>Refresh</a></p>"
@@ -383,18 +435,43 @@ void handleManualTrigger() {
   server.send(303);
 }
 
-void handleUpdateMac() {
+void handleUpdateConfig() {
+  bool updated = false;
+
   if (server.hasArg("mac")) {
     String newMacStr = server.arg("mac");
     newMacStr.trim();
     byte newMac[6];
     if (parseMacAddress(newMacStr.c_str(), newMac)) {
       saveMacToEEPROM(newMac);
+      updated = true;
       Serial.printf("[HTTP] Target MAC updated via web UI: %s\n", activeMacStr);
     } else {
       Serial.println(F("[HTTP] Invalid MAC received via web UI!"));
     }
   }
+
+  if (server.hasArg("ip")) {
+    String newIpStr = server.arg("ip");
+    newIpStr.trim();
+    IPAddress testIp;
+    if (testIp.fromString(newIpStr)) {
+      saveIpToEEPROM(newIpStr.c_str());
+      updated = true;
+      Serial.printf("[HTTP] Target IP updated via web UI: %s\n", activeServerIp);
+    } else {
+      Serial.println(F("[HTTP] Invalid IP received via web UI!"));
+    }
+  }
+
+  if (updated) {
+    // Re-probe target immediately so state reflects new target IP
+    bool isOnline = probeServer();
+    currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
+    lastSentServerState = currentServerState;
+    updateServerStatusOnCloudflare(currentServerState);
+  }
+
   server.sendHeader("Location", "/");
   server.send(303);
 }
@@ -402,7 +479,7 @@ void handleUpdateMac() {
 void handleStatusJson() {
   String json = "{\"server\":\"";
   json += (currentServerState == STATE_ONLINE) ? "ONLINE" : (currentServerState == STATE_OFFLINE ? "OFFLINE" : "UNKNOWN");
-  json += "\",\"ip\":\"" + String(SERVER_IP) + "\",\"mac\":\"" + String(activeMacStr) + "\",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
+  json += "\",\"ip\":\"" + String(activeServerIp) + "\",\"mac\":\"" + String(activeMacStr) + "\",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
   server.send(200, "application/json", json);
 }
 
@@ -416,19 +493,29 @@ void setup() {
   Serial.println(F("ESP8266 Standalone ServerStarter v1.0"));
   Serial.println(F("========================================"));
 
-  // Initialize and load persistent Target MAC from EEPROM
-  loadMacFromEEPROM();
+  // Initialize and load persistent Target MAC and IP from EEPROM (falls back to config.h if empty)
+  loadConfigFromEEPROM();
 
   connectWiFi();
 
   // Start local plain HTML web server on port 80
   server.on("/", HTTP_GET, handleRoot);
   server.on("/trigger", HTTP_POST, handleManualTrigger);
-  server.on("/update-mac", HTTP_POST, handleUpdateMac);
+  server.on("/update-mac", HTTP_POST, handleUpdateConfig); // backwards compatibility
+  server.on("/update-config", HTTP_POST, handleUpdateConfig);
   server.on("/status", HTTP_GET, handleStatusJson);
   server.begin();
   Serial.print(F("[Web] Local HTTP server active at: http://"));
   Serial.println(WiFi.localIP());
+
+  // Initialize mDNS responder (http://<hostname>.local)
+  const char* hName = WiFi.hostname().c_str();
+  if (MDNS.begin(hName)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.printf("[mDNS] Responder active! Access via: http://%s.local\n", hName);
+  } else {
+    Serial.println(F("[mDNS] Error setting up MDNS responder!"));
+  }
 
   // Probe target server immediately upon boot so state is not UNKNOWN
   bool isOnline = probeServer();
