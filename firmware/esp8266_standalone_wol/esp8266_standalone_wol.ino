@@ -3,7 +3,6 @@
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
-#include <NetBIOS.h>
 #include <EEPROM.h>
 
 /**
@@ -228,10 +227,6 @@ void connectWiFi() {
       Serial.println(F("[mDNS] Error setting up MDNS responder!"));
     }
 
-    // Initialize NetBIOS (Windows legacy name resolution: http://<hostname>)
-    NBNS.begin(hName);
-    Serial.printf("[NetBIOS] Registered name for Windows: http://%s\n", hName);
-
     udp.begin(9); // Initialize UDP listener/sender
   } else {
     Serial.println(F("\n[WiFi] Connection timeout. Retrying later..."));
@@ -353,16 +348,12 @@ void handleRoot() {
   html += activeMacStr;
   html += F("</p><p><b>Free Heap:</b> ");
   html += String(ESP.getFreeHeap());
-  html += F(" bytes</p><p style='font-size:12px;color:#94a3b8'><b>Access URLs:</b><br>"
-            "&bull; Mac / Linux / iOS: <a href='http://");
+  html += F(" bytes</p><p style='font-size:12px;color:#94a3b8'><b>Local URL:</b> "
+            "<a href='http://");
   html += WiFi.hostname();
   html += F(".local'>http://");
   html += WiFi.hostname();
-  html += F(".local</a><br>&bull; Windows: <a href='http://");
-  html += WiFi.hostname();
-  html += F("'>http://");
-  html += WiFi.hostname();
-  html += F("</a></p>");
+  html += F(".local</a></p>");
   if (lastWolSentEpoch > 0 && (millis() - lastWolSentEpoch < 30000)) {
     html += F("<p style='background:#0369a1;padding:8px;border-radius:4px;color:#fff;font-size:13px;margin:8px 0'>⚡ WOL Packet Sent!</p>");
   }
