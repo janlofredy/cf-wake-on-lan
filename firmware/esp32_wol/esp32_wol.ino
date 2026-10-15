@@ -21,6 +21,7 @@ WiFiUDP udp;
 Preferences prefs;
 byte activeMac[6] = DEFAULT_SERVER_MAC;
 char activeMacStr[18] = "";
+char activeServerIp[16] = "";
 
 // State Memory
 enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
@@ -105,7 +106,7 @@ void connectWiFi() {
 bool probeServer() {
   WiFiClient client;
   client.setTimeout(1); // 1-second timeout
-  if (client.connect(SERVER_IP, SERVER_PORT)) {
+  if (client.connect(activeServerIp, SERVER_PORT)) {
     client.stop();
     return true;
   }
@@ -161,21 +162,48 @@ bool saveTargetMac(const byte* newMac) {
   return false;
 }
 
-// Load MAC from persistent storage (or fallback to DEFAULT_SERVER_MAC)
-void loadTargetMac() {
+// Save IP to persistent flash storage via Preferences (NVS)
+bool saveTargetIp(const char* newIp) {
+  if (strcmp(activeServerIp, newIp) != 0) {
+    strncpy(activeServerIp, newIp, sizeof(activeServerIp) - 1);
+    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
+    prefs.begin("wol_config", false);
+    prefs.putString("ip", activeServerIp);
+    prefs.end();
+    Serial.printf("[STORAGE] Target IP saved to Preferences: %s\n", activeServerIp);
+    return true;
+  }
+  return false;
+}
+
+// Load MAC and IP from persistent storage (or fallback to defaults from config.h)
+void loadTargetConfig() {
   prefs.begin("wol_config", true);
-  size_t len = prefs.getBytes("mac", activeMac, 6);
+  size_t macLen = prefs.getBytes("mac", activeMac, 6);
+  String storedIp = prefs.getString("ip", "");
   prefs.end();
 
-  if (len == 6) {
+  if (macLen == 6) {
     macBytesToString(activeMac, activeMacStr);
     Serial.printf("[STORAGE] Loaded Target MAC from Preferences: %s\n", activeMacStr);
   } else {
     macBytesToString(activeMac, activeMacStr);
-    Serial.printf("[STORAGE] Using default Target MAC: %s\n", activeMacStr);
-    // Persist default to NVS
+    Serial.printf("[STORAGE] Using fallback default Target MAC: %s\n", activeMacStr);
     prefs.begin("wol_config", false);
     prefs.putBytes("mac", activeMac, 6);
+    prefs.end();
+  }
+
+  if (storedIp.length() >= 7) {
+    strncpy(activeServerIp, storedIp.c_str(), sizeof(activeServerIp) - 1);
+    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
+    Serial.printf("[STORAGE] Loaded Target IP from Preferences: %s\n", activeServerIp);
+  } else {
+    strncpy(activeServerIp, SERVER_IP, sizeof(activeServerIp) - 1);
+    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
+    Serial.printf("[STORAGE] Using fallback default Target IP: %s\n", activeServerIp);
+    prefs.begin("wol_config", false);
+    prefs.putString("ip", activeServerIp);
     prefs.end();
   }
 }
@@ -215,8 +243,8 @@ void setup() {
   delay(1000);
   Serial.println("\n--- ESP32 Dual-Interval Wake-on-LAN Controller ---");
 
-  // Load persistent MAC address from flash storage
-  loadTargetMac();
+  // Load persistent MAC address and IP from flash storage (falls back to config.h if unconfigured)
+  loadTargetConfig();
 
   connectWiFi();
 }
