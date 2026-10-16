@@ -709,6 +709,60 @@ function renderDashboardHTML(hasCfAccess = false) {
 </html>`;
 }
 
+async function getAppState(env) {
+  try {
+    const raw = await env.WOL_STORE.get("wol_state");
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error("Error reading wol_state from KV:", err);
+  }
+
+  // Backward compatibility: Fallback to individual legacy keys if wol_state is not set
+  try {
+    const [pending, autoOn, targetMac, serverStatus, lastSeen, lastWolSent, lastPingEpoch] = await Promise.all([
+      env.WOL_STORE.get("trigger_wol"),
+      env.WOL_STORE.get("auto_turn_on"),
+      env.WOL_STORE.get("target_mac"),
+      env.WOL_STORE.get("server_status"),
+      env.WOL_STORE.get("server_last_seen"),
+      env.WOL_STORE.get("last_wol_sent"),
+      env.WOL_STORE.get("aod_last_ping_epoch")
+    ]);
+    return {
+      trigger: pending === "true" || pending === "1",
+      auto_turn_on: autoOn === "true",
+      target_mac: targetMac || "",
+      server_status: (serverStatus || "UNKNOWN").toUpperCase(),
+      server_last_seen: lastSeen || null,
+      last_wol_sent: lastWolSent || null,
+      aod_last_ping_epoch: Number(lastPingEpoch) || 0
+    };
+  } catch (err) {
+    console.error("Error reading legacy keys from KV:", err);
+    return {
+      trigger: false,
+      auto_turn_on: false,
+      target_mac: "",
+      server_status: "UNKNOWN",
+      server_last_seen: null,
+      last_wol_sent: null,
+      aod_last_ping_epoch: 0
+    };
+  }
+}
+
+async function saveAppState(env, state) {
+  try {
+    await env.WOL_STORE.put("wol_state", JSON.stringify(state));
+    return true;
+  } catch (err) {
+    console.error("KV put failed (rate limit / quota reached):", err);
+    return false;
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -791,7 +845,10 @@ export default {
       let body = {};
       try { body = await request.json(); } catch(e) {}
       const enable = body.auto_turn_on === true;
-      await env.WOL_STORE.put("auto_turn_on", enable ? "true" : "false");
+      
+      const state = await getAppState(env);
+      state.auto_turn_on = enable;
+      await saveAppState(env, state);
 
       return new Response(
         JSON.stringify({
@@ -807,32 +864,28 @@ export default {
     if (request.method === "GET" && url.pathname === "/status") {
       if (!isUser && !isAOD) return unauthorized();
 
-      let pending = await env.WOL_STORE.get("trigger_wol");
-      const autoOn = await env.WOL_STORE.get("auto_turn_on") === "true";
-      const targetMac = await env.WOL_STORE.get("target_mac") || "";
-      const serverStatus = await env.WOL_STORE.get("server_status") || "UNKNOWN";
-      const lastSeen = await env.WOL_STORE.get("server_last_seen") || null;
-      const lastWolSent = await env.WOL_STORE.get("last_wol_sent") || null;
-      const lastPingEpoch = await env.WOL_STORE.get("aod_last_ping_epoch") || 0;
+      const state = await getAppState(env);
+      let shouldTrigger = Boolean(state.trigger);
 
-      // AUTOMATIC TURN ON LOGIC:
-      let shouldTrigger = (pending === "true" || pending === "1");
-      if (autoOn && serverStatus.toUpperCase() === "OFFLINE" && !shouldTrigger) {
+      // AUTOMATIC TURN ON LOGIC: only write when transitioning to BOOTING
+      if (state.auto_turn_on && (state.server_status || "").toUpperCase() === "OFFLINE" && !shouldTrigger) {
         shouldTrigger = true;
-        await env.WOL_STORE.put("trigger_wol", "true");
-        await env.WOL_STORE.put("server_status", "BOOTING");
+        state.trigger = true;
+        state.server_status = "BOOTING";
+        await saveAppState(env, state);
       }
 
-      const aodAlive = (Date.now() - Number(lastPingEpoch)) < 120000;
+      // Microcontroller is alive if it checked in within the last 20 minutes
+      const aodAlive = (Date.now() - Number(state.aod_last_ping_epoch || 0)) < (20 * 60 * 1000);
 
       return new Response(
         JSON.stringify({
           trigger: shouldTrigger,
-          auto_turn_on: autoOn,
-          mac: targetMac,
-          server_status: serverStatus,
-          server_last_seen: lastSeen,
-          last_wol_sent: lastWolSent,
+          auto_turn_on: Boolean(state.auto_turn_on),
+          mac: state.target_mac || "",
+          server_status: state.server_status || "UNKNOWN",
+          server_last_seen: state.server_last_seen || null,
+          last_wol_sent: state.last_wol_sent || null,
           aod_alive: aodAlive,
           caller_role: isUser ? "USER" : "AOD_DEVICE"
         }),
@@ -855,7 +908,8 @@ export default {
       try { reqData = await request.json(); } catch (e) {}
 
       const force = reqData.force === true;
-      const currentStatus = (await env.WOL_STORE.get("server_status") || "").toUpperCase();
+      const state = await getAppState(env);
+      const currentStatus = (state.server_status || "").toUpperCase();
 
       if (currentStatus === "ONLINE" && !force) {
         return new Response(
@@ -869,11 +923,12 @@ export default {
       }
 
       const mac = reqData.mac || "";
-      await env.WOL_STORE.put("trigger_wol", "true");
-      await env.WOL_STORE.put("server_status", "BOOTING");
+      state.trigger = true;
+      state.server_status = "BOOTING";
       if (mac) {
-        await env.WOL_STORE.put("target_mac", mac);
+        state.target_mac = mac;
       }
+      await saveAppState(env, state);
 
       return new Response(
         JSON.stringify({
@@ -894,12 +949,14 @@ export default {
       try { body = await request.json(); } catch(e) {}
 
       const result = body.result || "SENT";
-      await env.WOL_STORE.put("trigger_wol", "false");
-      await env.WOL_STORE.put("last_wol_sent", new Date().toISOString());
+      const state = await getAppState(env);
+      state.trigger = false;
+      state.last_wol_sent = new Date().toISOString();
 
       if (result === "FAILED_TO_SEND") {
-        await env.WOL_STORE.put("server_status", "FAILED_TO_TRIGGER");
+        state.server_status = "FAILED_TO_TRIGGER";
       }
+      await saveAppState(env, state);
 
       return new Response(
         JSON.stringify({ success: true, message: "Trigger cleared", wol_result: result }),
@@ -914,13 +971,30 @@ export default {
       let body = {};
       try { body = await request.json(); } catch(e) {}
 
-      const status = body.status || "ONLINE";
-      await env.WOL_STORE.put("server_status", status);
-      await env.WOL_STORE.put("server_last_seen", new Date().toISOString());
-      await env.WOL_STORE.put("aod_last_ping_epoch", String(Date.now()));
+      const incomingStatus = (body.status || "ONLINE").toUpperCase();
+      const now = Date.now();
+      const state = await getAppState(env);
+
+      // KV optimization: only write to KV if state changed OR periodic keepalive elapsed (15 min)
+      const currentStatus = (state.server_status || "").toUpperCase();
+      const statusChanged = currentStatus !== incomingStatus;
+      const keepaliveDue = (now - Number(state.aod_last_ping_epoch || 0)) >= (15 * 60 * 1000);
+
+      if (statusChanged || keepaliveDue) {
+        state.server_status = incomingStatus;
+        if (incomingStatus === "ONLINE") {
+          state.server_last_seen = new Date(now).toISOString();
+        }
+        state.aod_last_ping_epoch = now;
+        await saveAppState(env, state);
+      }
 
       return new Response(
-        JSON.stringify({ success: true, server_status: status }),
+        JSON.stringify({ 
+          success: true, 
+          server_status: incomingStatus,
+          kv_write_occurred: statusChanged || keepaliveDue
+        }),
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     }

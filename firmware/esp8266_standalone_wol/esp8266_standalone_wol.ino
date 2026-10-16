@@ -56,7 +56,11 @@ ServerState lastSentServerState = STATE_UNKNOWN;
 
 unsigned long lastServerCheckTime = 0;
 unsigned long lastCfSyncTime      = 0;
+unsigned long lastCfKeepaliveTime = 0;
 unsigned long lastWolSentEpoch    = 0;
+
+// Keepalive interval for Cloudflare Workers KV free tier (15 minutes = 96 writes/day)
+#define CF_KEEPALIVE_INTERVAL_MS  (15UL * 60UL * 1000UL)
 
 void blinkLed(int times, int ms) {
   for (int i = 0; i < times; i++) {
@@ -331,6 +335,7 @@ void updateServerStatusOnCloudflare(ServerState state) {
     if (httpCode > 0) {
       Serial.printf("[CF] Response: %d\n", httpCode);
       lastSentServerState = state;
+      lastCfKeepaliveTime = millis();
     } else {
       Serial.printf("[CF] HTTP POST failed, code: %d (%s)\n", 
                     httpCode, http.errorToString(httpCode).c_str());
@@ -552,17 +557,21 @@ void loop() {
     }
   }
 
-  // 2. Periodic sync & WOL polling
+  // 2. Periodic WOL trigger check (uses Cloudflare GET /status read operations, 100k/day free)
   if (currentMillis - lastCfSyncTime >= CF_SYNC_INTERVAL_MS) {
     lastCfSyncTime = currentMillis;
-
-    // Periodic heartbeat sync
-    updateServerStatusOnCloudflare(currentServerState);
 
     // If server is currently offline, check if user requested a wake-up
     if (currentServerState == STATE_OFFLINE) {
       checkWOLTrigger();
     }
+  }
+
+  // 3. Periodic Keepalive to Cloudflare (throttled to 15 minutes to conserve free KV write tier)
+  // State transitions are already sent immediately in step 1.
+  if (currentMillis - lastCfKeepaliveTime >= CF_KEEPALIVE_INTERVAL_MS || lastCfKeepaliveTime == 0) {
+    lastCfKeepaliveTime = currentMillis;
+    updateServerStatusOnCloudflare(currentServerState);
   }
 
   delay(10);

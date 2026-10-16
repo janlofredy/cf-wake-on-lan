@@ -371,7 +371,7 @@ void loop() {
 
     static unsigned long lastSentTime = 0;
     bool statusChanged = (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN);
-    bool periodicRefresh = (now - lastSentTime >= 60000 || lastSentTime == 0);
+    bool periodicRefresh = (now - lastSentTime >= 900000UL || lastSentTime == 0); // 15 mins to stay well within free KV tier
 
     if (statusChanged || periodicRefresh) {
       updateServerStatusOnCloudflare(currentServerState);
