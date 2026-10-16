@@ -269,10 +269,10 @@ void loop() {
   if (now - lastCfSyncTime >= CF_SYNC_INTERVAL_MS || lastCfSyncTime == 0) {
     lastCfSyncTime = now;
 
-    // 1. If status changed or periodic refresh (~60s), ping Cloudflare to keep AOD health alive
+    // 1. If status changed or periodic keepalive refresh (~15 mins), ping Cloudflare to keep AOD health alive
     static unsigned long lastSentTime = 0;
     bool statusChanged = (currentServerState != lastSentServerState && currentServerState != STATE_UNKNOWN);
-    bool periodicRefresh = (now - lastSentTime >= 60000 || lastSentTime == 0);
+    bool periodicRefresh = (now - lastSentTime >= 900000UL || lastSentTime == 0); // 15 mins to stay well within free KV tier
 
     if (statusChanged || periodicRefresh) {
       Serial.println("[AOD Health/Status] Pinging Cloudflare with server status...");
