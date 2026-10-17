@@ -3,6 +3,18 @@ main = "cloudflare-worker/src/index.js"
 compatibility_date = "2024-01-01"
 workers_dev = true
 
-[[kv_namespaces]]
-binding = "WOL_STORE"
-id = "YOUR_KV_NAMESPACE_ID"
+# ==============================================================================
+# KV Namespace Binding: WOL_STORE
+# ==============================================================================
+# For Cloudflare Dashboard (Deploy from Git):
+# Do NOT hardcode your namespace ID here in a public repo!
+# Instead, add the binding directly in the Cloudflare Dashboard:
+#   Workers & Pages -> cf-wake-on-lan -> Settings -> Bindings -> Add KV Namespace
+#   - Variable name: WOL_STORE
+#   - KV namespace: select your WOL_STORE namespace
+#
+# For CLI Deployment (npx wrangler deploy):
+# Uncomment below and insert your personal KV namespace ID:
+# [[kv_namespaces]]
+# binding = "WOL_STORE"
+# id = "YOUR_KV_NAMESPACE_ID"
