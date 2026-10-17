@@ -1,50 +1,70 @@
 # cf-wake-on-lan
 
-An Always-On Device (AOD) Wake-on-LAN (WOL) remote server starter powered by **Cloudflare Workers + Cloudflare KV (100% Free Tier)**.
+An Always-On Device (AOD) Wake-on-LAN (WOL) remote server starter powered by **ESP8266 Standalone Firmware + Cloudflare Workers + Cloudflare KV (100% Free Tier)**.
 
 ### 🔌 Hardware Configuration
-- **Primary Board**: **Arduino Uno R3 + ESP8266 ESP-12E WiFi Shield** (Dedicated Always-On WOL Controller)
-- **Alternative / Backup Board**: **ESP32 Dev Board** (Alternative standalone firmware included)
+- **Board**: **ESP8266 (ESP-12E WiFi Shield or Standalone NodeMCU/Wemos)**
+  - Runs natively on the 32-bit ESP8266 module with its own hardware Wi-Fi and UDP stack.
+  - No AT command overhead, no SoftwareSerial bottlenecks.
+  - Fully independent, low-power, always-on IoT controller.
 
 ---
 
-## ⚡ Smart Polling & Trigger Flow
+## ⚡ Architecture & Dual Polling Flow
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Server as Target Server (LAN)
-    participant MCU as Arduino Uno / ESP32
+    participant ESP as ESP8266 Standalone
     participant CF as Cloudflare Worker (KV)
     actor User as You / Remote Trigger
 
-    loop Local Server Probe (e.g. Every 5s)
-        MCU->>Server: LAN Port Probe (TCP)
-        Note over MCU: Updates currentServerState (ONLINE / OFFLINE)
+    Note over ESP: Boot -> Sync NTP Time -> Start Local Web Server
+
+    loop Local Server Probe (Configurable, e.g. Every 5s)
+        ESP->>Server: LAN Port Probe (TCP Port 22 / 445)
+        Note over ESP: Record probe latency & update currentServerState
     end
 
-    loop Cloudflare Sync Interval (e.g. Every 20s)
-        alt Server State Changed (current != lastSent)
-            MCU->>CF: POST /server/ping { status: ONLINE / OFFLINE }
-            Note over MCU: lastSentServerState = currentServerState
+    loop Cloudflare Sync Interval (Configurable, e.g. Every 30s)
+        alt Server State Changed (ONLINE <-> OFFLINE)
+            ESP->>CF: POST /server/ping { status: ONLINE / OFFLINE }
+            Note over ESP: Immediate state notification & latency logging
         end
 
         alt Server is OFFLINE
-            MCU->>CF: GET /status (Check if WOL is triggered)
+            ESP->>CF: GET /status (Check if WOL is triggered)
             opt Trigger is true
-                MCU->>Server: Broadcast UDP Magic Packet (Port 9)
-                MCU->>CF: POST /ack (Disarm trigger)
+                ESP->>Server: Broadcast UDP Magic Packet (Port 9 & 7)
+                ESP->>CF: POST /ack (Disarm trigger)
             end
         else Server is ONLINE
-            Note over MCU,CF: Trigger checking skipped (Server is already ON)
+            Note over ESP,CF: Trigger checking skipped (Server is already ON)
         end
     end
 ```
 
-### 🧠 Flow Benefits:
-1. **Separated Intervals**: Local LAN server probe runs fast (e.g., every 5s) without consuming internet bandwidth or Cloudflare quotas.
-2. **State Memory (`current` vs `lastSent`)**: Cloudflare is only notified when the status actually changes, minimizing HTTP calls.
-3. **Conditional Wake Checking**: When the server is already `ONLINE`, the board avoids unnecessary trigger processing. As soon as the server is `OFFLINE`, it monitors for WOL triggers on every sync cycle.
+### 🧠 Core Features:
+1. **First-Time Setup & Fallback AP Portal (`ServerStarter-Setup`)**:
+   - Automatically starts an open setup network at `http://192.168.4.1` with DNS captive portal redirection if unconfigured or on Wi-Fi connection timeout (~25s).
+   - Background verification tests Wi-Fi credentials before switching modes so you are never locked out.
+   - Configures Wi-Fi credentials, Cloudflare host/token, target MAC/IP, timezone offset, and polling intervals directly in the browser.
+2. **NTP Date & Time Synchronization**:
+   - Background SNTP synchronization via `pool.ntp.org` and `time.google.com`.
+   - Displays real-time timestamps (`YYYY-MM-DD HH:MM:SS`) with persistent timezone offset.
+3. **Comprehensive Device & Network Telemetry**:
+   - **Device Lifecycle**: Boot Timestamp, Reset Reason (*Power On*, *Hardware Watchdog*, *Software Restart*), Uptime, Current & Lowest Free Heap.
+   - **Target Server Probe**: Last Successful Ping, Last Failed Ping, Probe Latency (ms), Total Probes, Consecutive Failures, and Success Rate (%).
+   - **Cloudflare Integration**: Last Sync HTTP Status, Round-Trip Latency (ms), Sync Success Rate (%), Last Successful/Failed Syncs, and Total WOL Dispatches.
+   - **Wi-Fi Diagnostics**: RSSI (dBm & %), Reconnection Counter, IP, Gateway, Subnet, and Hostname.
+4. **Rolling 10-Request Activity Log**:
+   - In-memory circular buffer recording the last 10 actions (`CF /server/ping`, `CF /status`, `CF /ack`, `LAN Probe`, `WOL Packet`) with execution timestamps, status codes, and latency.
+5. **Configurable Polling Intervals**:
+   - Local LAN probe rate (default: 5s) and Cloudflare sync rate (default: 30s) are fully editable via the Web UI and saved to persistent EEPROM.
+6. **Ultra-Minimal Plain Table Web UI & JSON API**:
+   - Ultra-fast, lightweight plain-table dark theme dashboard at `http://serverstarter.local`.
+   - Machine-readable JSON telemetry endpoint at `/status`.
 
 ---
 
@@ -55,50 +75,44 @@ sequenceDiagram
 │   ├── package.json
 │   ├── wrangler.toml
 │   └── src/
-│       └── index.js
+│       └── index.js                    # Cloudflare Worker & Web Dashboard UI
 ├── firmware/
-│   ├── config.h.example
-│   ├── esp32/
-│   │   └── esp32_wol.ino
-│   └── arduino_uno_esp8266/
-│       └── arduino_uno_esp8266_wol.ino
-├── .gitignore
+│   ├── config.h.example                # Configuration template
+│   └── esp8266_standalone_wol/
+│       ├── config.h                    # Local fallback configuration
+│       ├── config.h.example            # Module configuration template
+│       ├── storage.h                   # 256-byte EEPROM persistent storage management
+│       ├── time_service.h              # NTP clock synchronization & uptime formatting
+│       ├── telemetry.h                 # Device metrics & rolling 10-request activity log
+│       ├── wol.h                       # UDP Wake-on-LAN magic packet multi-broadcast
+│       ├── cf_client.h                 # Cloudflare HTTP client & LAN TCP reachability probe
+│       ├── network_portal.h            # Wi-Fi Station, fallback Setup AP & captive portal
+│       ├── web_server.h                # Ultra-minimal Web UI, /status API & setup handlers
+│       └── esp8266_standalone_wol.ino  # Lean main orchestrator (setup & loop)
+├── test_wol.py                         # Local Python Wake-on-LAN diagnostic script
+├── wrangler.toml                       # Cloudflare Worker configuration
 └── README.md
 ```
 
 ---
 
-## 🚀 Cloudflare Worker Setup (Free Tier)
+## 🚀 Setup Guide
 
-You can deploy the Worker directly from this repository using either the **Cloudflare Dashboard (Git Integration)** or the **Wrangler CLI**.
+### 1. Cloudflare Worker Setup (Free Tier)
 
-### Option 1: Direct Cloudflare Dashboard (Deploy from Git)
-1. Push this repository to your GitHub/GitLab account.
-2. In the **Cloudflare Dashboard**:
-   - Go to **Workers & Pages** -> **Create application** -> **Workers** -> Select **Connect to Git**.
-   - Select your repository (`cf-wake-on-lan`).
-   - The root [`wrangler.toml`](wrangler.toml) will be detected automatically.
-3. In **Settings -> Bindings**:
-   - Add a **KV namespace binding**:
-     - Variable name: `WOL_STORE`
-     - KV namespace: Select or create `WOL_STORE`.
-4. In **Settings -> Variables and Secrets**:
-   - Add Secret: `API_KEY` (set your secret authorization token).
-5. Click **Save and Deploy**. Cloudflare will automatically build and deploy every time you push changes!
+Deploy the Cloudflare Worker using either the Cloudflare Dashboard or Wrangler CLI.
 
----
-
-### Option 2: Deploy via CLI (Wrangler)
+#### Deploy via Wrangler CLI:
 1. Log in to Cloudflare:
    ```bash
    npx wrangler login
    ```
-2. Create the free KV namespace:
+2. Create the KV namespace:
    ```bash
    npx wrangler kv namespace create WOL_STORE
    ```
-3. Copy the generated `id` and paste it into [`wrangler.toml`](wrangler.toml).
-4. Set your secret token:
+3. Copy the returned `id` and paste it into [`wrangler.toml`](wrangler.toml).
+4. Set your secret device and user access tokens:
    ```bash
    npx wrangler secret put API_KEY
    ```
@@ -109,86 +123,82 @@ You can deploy the Worker directly from this repository using either the **Cloud
 
 ---
 
-### 2. Microcontroller Setup
+### 2. ESP8266 Flashing Guide (ESP-12E WiFi Shield on Arduino Uno)
 
-#### 🌟 Recommended: Direct Flashing to ESP8266 (Bypass AT Commands)
-Instead of dealing with flaky factory AT firmware, baud rate mismatches, and `SoftwareSerial` overhead between the Uno and ESP, **flash code directly to the ESP-12E module on the shield**. The ESP8266 has a 32-bit CPU and its own Wi-Fi/UDP stack, making it far faster, more stable, and self-contained!
+Flashing directly to the ESP-12E module bypasses the Arduino MCU, running the standalone firmware with full speed and zero SoftwareSerial bottlenecks.
 
-##### 📺 Reference Guides & Videos
-- **[Instructables Setup Guide: ESP8266 ESP-12E UART Wireless WIFI Shield TTL Converter](https://www.instructables.com/ESP8266-ESP-12E-UART-Wireless-WIFI-Shield-TTL-Conv/)**
-- **[Part 1: Arduino Uno + ESP8266 WiFi Shield Setup Guide (YouTube)](https://www.youtube.com/watch?v=Y1GWoiuE-Ls)**
-- **[Part 2: Uploading & Testing WebServer Example directly on ESP8266 (YouTube)](https://www.youtube.com/watch?v=jCL4VuFRKvQ)**
+#### Step 1: Silence Arduino Uno MCU (USB-to-UART Bridge Mode)
+- Connect a DuPont jumper between the Arduino Uno **`RESET`** pin and **`GND`**.
+*(This halts the ATmega328P so the Uno onboard USB-UART chip speaks directly to the ESP8266).*
 
-> [!NOTE]
-> **Board Identification ("MOER" vs "MORE")**:
-> Check the white silkscreen text printed on your WiFi shield near the ESP-12 module:
-> - **`"Moer info & tech"`** (or `"Moer info $ tech"`): A common clone printing misspelling (often manufactured by WangTongze / Doit clones). As highlighted in the community and Instructables guides, this variant often has DIP switch / hardware serial routing conflicts with the Arduino's D0/D1 pins, which is why flashing the ESP8266 module directly (or bypassing the Uno via RESET-to-GND) is strongly recommended over relying on factory AT firmware!
-> - **`"More info & tech"`**: Standard silkscreen printing.
+#### Step 2: Set Shield DIP Switches to Flash Mode
+- **DIP 1**: `OFF`
+- **DIP 2**: `OFF`
+- **DIP 3**: `ON` (pulls GPIO0 LOW for download boot mode)
+- **DIP 4**: `ON`
 
----
+#### Step 3: Wire Serial Jumpers
+- Connect Shield **`TX` / `TXD`** $\rightarrow$ Arduino Uno **`D1` (TX)** (or D0 depending on shield variant).
+- Connect Shield **`RX` / `RXD`** $\rightarrow$ Arduino Uno **`D0` (RX)** (or D1 depending on shield variant).
 
-##### 🛠️ How to Flash Directly to the ESP8266 (Bypassing AT Commands)
+#### Step 4: Arduino IDE Configuration
+1. In Arduino IDE, open **Settings / Preferences** and add the ESP8266 URL to **Additional Boards Manager URLs**:
+   ```
+   http://arduino.esp8266.com/stable/package_esp8266com_index.json
+   ```
+2. Open **Tools > Board > Boards Manager**, search for **`esp8266`**, and install **`esp8266 by ESP8266 Community`**.
+3. Select Board: **`Tools > Board > ESP8266 Boards > Generic ESP8266 Module`**.
+4. Flash Size: **`4MB (FS:2MB OTA:~1019KB)`** (or `512KB` depending on your chip).
+5. Upload Speed: **`115200`**.
 
-1. **Silence the Arduino Uno MCU (USB-to-Serial Bridge Mode)**:
-   - Connect a DuPont jumper between the Arduino Uno **`RESET`** pin and **`GND`**.
-   - *(This halts the Uno's ATmega328P so its onboard USB-UART chip speaks directly to the ESP8266).*
+#### Step 5: Upload Firmware
+1. Open [`firmware/esp8266_standalone_wol/esp8266_standalone_wol.ino`](firmware/esp8266_standalone_wol/esp8266_standalone_wol.ino).
+2. Press the **ESP-RST** button on the shield.
+3. Click **Upload** in Arduino IDE.
 
-2. **Set Shield DIP Switches to Flash Mode**:
-   - Set **DIP 1**: `OFF`
-   - Set **DIP 2**: `OFF`
-   - Set **DIP 3**: `ON` (pulls GPIO0 LOW for download boot mode)
-   - Set **DIP 4**: `ON`
-
-3. **Bridge Serial Communication (Uno <-> ESP8266)**:
-   - Connect Shield **`TX` / `TXD`** $\rightarrow$ Arduino Uno **`D1` (TX)** (or D0 depending on shield routing).
-   - Connect Shield **`RX` / `RXD`** $\rightarrow$ Arduino Uno **`D0` (RX)** (or D1 depending on shield routing).
-   - *Note*: Because the Uno MCU is bypassed, connect `TX` to `TX` and `RX` to `RX` so the USB-Serial bridge routes directly to the ESP.
-
-4. **Arduino IDE Setup & ESP8266 Board Package**:
-   - Add the ESP8266 Board Manager URL in Arduino IDE:
-     - Open **File > Preferences** (Windows/Linux) or **Arduino IDE > Settings / Preferences** (macOS).
-     - Under **"Additional Boards Manager URLs"**, add:
-       ```
-       http://arduino.esp8266.com/stable/package_esp8266com_index.json
-       ```
-       *(If you already have URLs listed, separate them with a comma or add it to a new line).*
-   - Open **Tools > Board > Boards Manager...**, search for **`esp8266`**, and install **`esp8266 by ESP8266 Community`** (version 2.7.4 or 3.x).
-   - Select Board: **`Tools > Board > ESP8266 Boards > Generic ESP8266 Module`**.
-   - Flash Size: **`4MB (FS:2MB OTA:~1019KB)`** (or `512KB` depending on your ESP-12 chip variant).
-   - Upload Speed: **`115200`**.
-
-5. **Upload & Run**:
-   - Copy [`firmware/esp8266_standalone_wol/config.h.example`](firmware/esp8266_standalone_wol/config.h.example) to `firmware/esp8266_standalone_wol/config.h` and fill in your WiFi and Cloudflare details.
-   - Open [`firmware/esp8266_standalone_wol/esp8266_standalone_wol.ino`](firmware/esp8266_standalone_wol/esp8266_standalone_wol.ino).
-   - Press the **ESP-RST** button on the shield right before uploading.
-   - Click **Upload**.
-   - **Switch to Run Mode**: Once flashed, switch **DIP 3 to `OFF`** and **DIP 4 to `OFF`** (DIP 1 & 2 `ON` or maintain bridge), then press **ESP-RST**. The ESP8266 will boot the standalone firmware directly!
+#### Step 6: Switch to Run Mode
+Once flashing finishes:
+1. Switch **DIP 3 to `OFF`** and **DIP 4 to `OFF`**.
+2. Set **DIP 1 to `ON`** and **DIP 2 to `ON`** (or leave jumpers connected to Uno).
+3. Press **ESP-RST** to boot into production mode!
 
 ---
 
-#### 🔌 Legacy Option: Arduino Uno running AT Commands
-*(If you specifically want the Arduino Uno ATmega328P to orchestrate the ESP8266 over SoftwareSerial)*
-1. Mount the ESP8266 ESP-12E WiFi shield directly on top of the Arduino Uno.
-2. Shield DIP switches: Set all to `OFF` (1: OFF, 2: OFF, 3: OFF, 4: OFF).
-3. Connect jumpers: Shield `TX` $\rightarrow$ Uno `D2`, Shield `RX` $\rightarrow$ Uno `D3`.
-4. Open [`firmware/arduino_uno_esp8266_wol/arduino_uno_esp8266_wol.ino`](firmware/arduino_uno_esp8266/arduino_uno_esp8266_wol.ino).
-5. Configure credentials in `config.h`, select **Arduino Uno**, and upload.
+## 📶 First-Time Wi-Fi & Cloudflare Onboarding
+
+1. On first boot (or if Wi-Fi cannot be reached within 25 seconds), the device starts an Access Point:
+   - **SSID**: `ServerStarter-Setup`
+   - **Gateway IP**: `http://192.168.4.1`
+2. Connect your phone or laptop to `ServerStarter-Setup`. The captive portal will open automatically (or navigate to `http://192.168.4.1/setup`).
+3. Select your local Wi-Fi from the network scan dropdown and fill in:
+   - Wi-Fi Password
+   - Cloudflare Host (`cf-wake-on-lan.<your-subdomain>.workers.dev`)
+   - Secret Auth Token
+   - Target Server MAC & IP
+   - Timezone (e.g. `8` for UTC+8)
+   - Probe Rate (e.g. `5` seconds) & CF Sync Rate (e.g. `30` seconds)
+4. Click **Verify & Save Configuration**. The ESP8266 tests the connection in the background. If valid, it saves to persistent EEPROM, shuts down the setup AP, and connects to your network.
 
 ---
 
-#### 🔄 Alternative Choice: ESP32 Dev Board (Backup Option)
-*(Use this if you ever repurpose the Arduino or need a standalone board)*
-1. In Arduino IDE:
-   - Install **ESP32 by Espressif Systems** via Boards Manager.
-   - Install **ArduinoJson** via Library Manager.
-2. Copy `firmware/config.h.example` to `firmware/config.h` and populate your network & Cloudflare credentials.
-3. Open [`esp32_wol.ino`](firmware/esp32/esp32_wol.ino), select your ESP32 board, and upload.
+## 🖥️ Local Web UI & JSON API
+
+Access the local dashboard on your network at:
+- **`http://serverstarter.local`** (via mDNS)
+- Or **`http://<ESP_DEVICE_IP>`**
+
+### Endpoints:
+- `GET /`: Ultra-minimal dark theme dashboard displaying server status, full telemetry, Cloudflare stats, rolling 10-request activity log, and quick configuration form.
+- `GET /status`: Machine-readable JSON telemetry API.
+- `POST /trigger`: Dispatches UDP Wake-on-LAN packet immediately.
+- `POST /update-config`: Updates Target MAC, IP, Timezone, and polling rates in EEPROM.
+- `POST /reset-setup`: Re-enters `ServerStarter-Setup` AP mode on demand.
 
 ---
 
-### 3. Triggering Wake-on-LAN from Anywhere
+## 🌐 Triggering Wake-on-LAN Remotely
 
-Send an authenticated HTTP POST request to trigger the server boot from anywhere (curl, iOS Shortcuts, Tasker, or browser):
+Send an authenticated HTTP POST request to trigger the server boot from anywhere (curl, iOS Shortcuts, Tasker, Home Assistant, or browser):
 
 ```bash
 curl -X POST "https://YOUR_WORKER_SUBDOMAIN.workers.dev/trigger" \
@@ -201,12 +211,13 @@ curl -X POST "https://YOUR_WORKER_SUBDOMAIN.workers.dev/trigger" \
 curl -X POST "https://YOUR_WORKER_SUBDOMAIN.workers.dev/trigger" \
   -H "Authorization: Bearer YOUR_SECRET_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mac": "11:22:33:44:55:66"}'
+  -d '{"mac": "00:11:22:33:44:55"}'
 ```
 
 ---
 
-## ⚙️ Free Tier Quota Details (Cloudflare KV)
+## ⚙️ Cloudflare KV Free Tier Quota Details
 - **Reads**: 100,000 / day
 - **Writes**: 1,000 / day
 - At a 30-second polling interval: `(86,400s / 30s) = 2,880 reads/day` (under **3%** of the free daily limit).
+- State-change-only and throttled 15-minute keepalives keep KV writes well under **100 writes/day** (under **10%** of the 1,000 free writes).

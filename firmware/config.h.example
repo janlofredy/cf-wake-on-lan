@@ -1,28 +1,58 @@
 #pragma once
 
-// Wi-Fi Configuration
-#define WIFI_SSID       "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
-#define DEVICE_HOSTNAME "serverstarter"  // Accessible at http://serverstarter.local (Mac/Linux/iOS/Win10+) or http://serverstarter (Windows NetBIOS/DHCP)
+// ==========================================
+// Operational Mode
+// ==========================================
+#define MODE_NORMAL         0   // Full Always-On Server Starter (Default)
+#define MODE_TEST_AT        1   // Shield AT Communication Check (for legacy testing)
+#define MODE_TEST_WIFI      2   // Wi-Fi Association Check
+#define MODE_TEST_WOL       3   // Standalone WOL Magic Packet Test (bypasses CF)
+#define MODE_TEST_CF        4   // Cloudflare HTTP Ping Test
 
+// Choose which mode to run:
+#define RUN_MODE            MODE_NORMAL
+
+// ==========================================
+// Network Defaults (Used if EEPROM unconfigured)
+// ==========================================
+#define WIFI_SSID           "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD       "YOUR_WIFI_PASSWORD"
+#define DEVICE_HOSTNAME     "serverstarter"  // Accessible at http://serverstarter.local
+#define SETUP_AP_SSID       "ServerStarter-Setup"
+#define WIFI_CONNECT_TIMEOUT_MS 25000UL     // 25 seconds before falling back to Setup AP
+
+// ==========================================
 // Cloudflare Worker Configuration
-// Example: "https://cf-wake-on-lan.your-subdomain.workers.dev"
-#define CF_WORKER_URL   "https://YOUR_WORKER_SUBDOMAIN.workers.dev"
-#define AUTH_TOKEN      "CHANGE_ME_AOD_DEVICE_KEY" // Matches AOD_DEVICE_KEY in Cloudflare Worker secrets
+// ==========================================
+// Hostname ONLY (e.g. "cf-wake-on-lan.yourname.workers.dev")
+#define CF_HOST             "YOUR_WORKER_SUBDOMAIN.workers.dev"
 
-// Default Target Server MAC Address (Wake-on-LAN target)
-#define DEFAULT_SERVER_MAC {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
+// AOD Device Secret Token (matches AOD_DEVICE_KEY in Cloudflare Worker)
+#define AUTH_TOKEN          "CHANGE_ME_AOD_DEVICE_KEY"
 
-// Target Server Local IP and Port for reachability checking (e.g. SSH 22, HTTP 80, RDP 3389)
-#define SERVER_IP       "192.168.1.100"
-#define SERVER_PORT     22
+// ==========================================
+// Target Server Configuration
+// ==========================================
+#define SERVER_MAC          "00:11:22:33:44:55"
+#define SERVER_IP           "192.168.1.100"
+#define SERVER_PORT         22
 
-// WOL Broadcast Port (typically 9 or 7)
-#define WOL_PORT        9
+// ==========================================
+// Timing Defaults (Seconds)
+// ==========================================
+#define DEFAULT_SERVER_CHECK_INTERVAL_SEC 5   // Probe local LAN server every 5 seconds
+#define DEFAULT_CF_SYNC_INTERVAL_SEC      30  // Sync with Cloudflare every 30 seconds
+#define CF_KEEPALIVE_INTERVAL_MS          (15UL * 60UL * 1000UL) // Keepalive every 15 min
 
-// --- Timing Configuration (ms) ---
-// 1. How often to poll the local server status (LAN TCP check)
-#define SERVER_CHECK_INTERVAL_MS  5000    // e.g. every 5 seconds locally
+// ==========================================
+// NTP Time Synchronization Defaults
+// ==========================================
+#define NTP_SERVER_1        "pool.ntp.org"
+#define NTP_SERVER_2        "time.google.com"
+#define DEFAULT_TIMEZONE_OFFSET_HOURS 8       // UTC+8 default (e.g. Manila / Singapore / HK)
 
-// 2. How often to synchronize status with Cloudflare Worker and check for triggers if OFF
-#define CF_SYNC_INTERVAL_MS       20000   // e.g. every 20 seconds (fits well within free tier)
+// ==========================================
+// Hardware Pinout
+// ==========================================
+#define LED_PIN             2                 // Built-in LED on ESP-12E (Active LOW)
+#define WOL_PORT            9                 // WOL UDP Port
