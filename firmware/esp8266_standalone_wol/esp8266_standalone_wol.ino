@@ -1,574 +1,119 @@
-#include <ESP8266WiFi.h>
-#include <WiFiUdp.h>
-#include <ESP8266HTTPClient.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <EEPROM.h>
+#include <Arduino.h>
+#include "config.h"
+#include "storage.h"
+#include "time_service.h"
+#include "telemetry.h"
+#include "wol.h"
+#include "cf_client.h"
+#include "network_portal.h"
+#include "web_server.h"
 
 /**
  * ============================================================================
- * ESP8266 ESP-12E Standalone ServerStarter Firmware
+ * ESP8266 Standalone ServerStarter Firmware
  * ============================================================================
- * Runs natively on the ESP-12E module on the WiFi Shield!
- * 
- * Hardware Settings to FLASH:
+ * Hardware: ESP8266 ESP-12E (Standalone on WiFi Shield or NodeMCU/Wemos)
+ *
+ * DIP SWITCHES to FLASH (ESP8266 Shield on Uno):
  *   - Arduino Uno RESET pin connected to GND (silences Uno MCU)
  *   - Shield DIP switches: 1: OFF, 2: OFF, 3: ON, 4: ON
  *   - Jumpers: Shield TX -> Uno D1 (or D0), Shield RX -> Uno D0 (or D1)
  *   - Press ESP-RST button before upload
- *   - In Arduino IDE: Board -> "Generic ESP8266 Module", Flash Size -> "4MB (FS:2MB OTA:~1019KB)" or similar
- * 
- * Hardware Settings to RUN (after flashing):
+ *   - In Arduino IDE: Board -> "Generic ESP8266 Module"
+ *
+ * DIP SWITCHES to RUN:
  *   - Shield DIP switches: 1: ON, 2: ON, 3: OFF, 4: OFF (or keep jumpers/reset)
  *   - Press ESP-RST button to start running
  * ============================================================================
  */
-#if defined(__has_include)
-  #if __has_include("config.h")
-    #include "config.h"
-  #else
-    #error "Missing config.h! Please copy config.h.example to config.h and configure your settings."
-  #endif
-#else
-  #include "config.h"
-#endif
-
-// Onboard LED on ESP-12 is usually GPIO 2 (active LOW)
-#define LED_PIN 2
-
-// EEPROM Persistent Storage Configuration
-#define EEPROM_SIZE         96
-#define EEPROM_MAGIC_ADDR   0
-#define EEPROM_MAC_ADDR     1   // 6 bytes (1..6)
-#define EEPROM_IP_ADDR      8   // up to 16 bytes string (8..23)
-#define EEPROM_MAGIC_BYTE   0xA6 // Changed to 0xA6 to initialize new IP layout alongside MAC
-
-byte activeMac[6] = {0};
-char activeMacStr[18] = "";
-char activeServerIp[16] = "";
-
-WiFiUDP udp;
-ESP8266WebServer server(80);
-
-enum ServerState { STATE_UNKNOWN, STATE_ONLINE, STATE_OFFLINE };
-ServerState currentServerState  = STATE_UNKNOWN;
-ServerState lastSentServerState = STATE_UNKNOWN;
-
-unsigned long lastServerCheckTime = 0;
-unsigned long lastCfSyncTime      = 0;
-unsigned long lastCfKeepaliveTime = 0;
-unsigned long lastWolSentEpoch    = 0;
-
-// Keepalive interval for Cloudflare Workers KV free tier (15 minutes = 96 writes/day)
-#define CF_KEEPALIVE_INTERVAL_MS  (15UL * 60UL * 1000UL)
-
-void blinkLed(int times, int ms) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, LOW); // Active LOW on ESP8266
-    delay(ms);
-    digitalWrite(LED_PIN, HIGH);
-    delay(ms);
-  }
-}
-
-// Convert 6-byte MAC array to formatted string "XX:XX:XX:XX:XX:XX"
-void macBytesToString(const byte* macBytes, char* outStr) {
-  sprintf(outStr, "%02x:%02x:%02x:%02x:%02x:%02x",
-          macBytes[0], macBytes[1], macBytes[2],
-          macBytes[3], macBytes[4], macBytes[5]);
-}
-
-// Parse MAC address string (e.g. "74:56:3C:8C:32:C4") into 6 bytes without sscanf
-bool parseMacAddress(const char* macStr, byte* macBytes) {
-  byte byteIdx = 0;
-  byte val = 0;
-  bool hasNibble = false;
-
-  for (int i = 0; macStr[i] != '\0' && byteIdx < 6; i++) {
-    char c = macStr[i];
-    int nibble = -1;
-    if (c >= '0' && c <= '9') nibble = c - '0';
-    else if (c >= 'a' && c <= 'f') nibble = c - 'a' + 10;
-    else if (c >= 'A' && c <= 'F') nibble = c - 'A' + 10;
-
-    if (nibble != -1) {
-      val = (val << 4) | (byte)nibble;
-      if (hasNibble) {
-        macBytes[byteIdx++] = val;
-        val = 0;
-        hasNibble = false;
-      } else {
-        hasNibble = true;
-      }
-    }
-  }
-  return (byteIdx == 6);
-}
-
-// Save IP to persistent EEPROM storage (only writes if changed to prevent flash wear)
-bool saveIpToEEPROM(const char* newIp) {
-  bool changed = false;
-  byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
-  if (magic != EEPROM_MAGIC_BYTE) {
-    EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_BYTE);
-    changed = true;
-  }
-
-  for (int i = 0; i < 16; i++) {
-    char c = newIp[i];
-    if (EEPROM.read(EEPROM_IP_ADDR + i) != (byte)c) {
-      EEPROM.write(EEPROM_IP_ADDR + i, (byte)c);
-      changed = true;
-    }
-    if (c == '\0') break;
-  }
-
-  if (changed) {
-    bool ok = EEPROM.commit();
-    if (ok) {
-      strncpy(activeServerIp, newIp, sizeof(activeServerIp) - 1);
-      activeServerIp[sizeof(activeServerIp) - 1] = '\0';
-      Serial.printf("[STORAGE] Target IP saved to persistent EEPROM: %s\n", activeServerIp);
-      return true;
-    } else {
-      Serial.println(F("[STORAGE] ERROR: EEPROM commit for IP failed!"));
-      return false;
-    }
-  }
-  return true;
-}
-
-// Save MAC to persistent EEPROM storage (only writes if changed to prevent flash wear)
-bool saveMacToEEPROM(const byte* newMac) {
-  bool changed = false;
-  byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
-  if (magic != EEPROM_MAGIC_BYTE) {
-    EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_BYTE);
-    changed = true;
-  }
-
-  for (int i = 0; i < 6; i++) {
-    if (EEPROM.read(EEPROM_MAC_ADDR + i) != newMac[i]) {
-      EEPROM.write(EEPROM_MAC_ADDR + i, newMac[i]);
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    bool ok = EEPROM.commit();
-    if (ok) {
-      memcpy(activeMac, newMac, 6);
-      macBytesToString(activeMac, activeMacStr);
-      Serial.printf("[STORAGE] Target MAC saved to persistent EEPROM: %s\n", activeMacStr);
-      return true;
-    } else {
-      Serial.println(F("[STORAGE] ERROR: EEPROM commit failed!"));
-      return false;
-    }
-  }
-  return true;
-}
-
-// Load MAC and IP from persistent EEPROM (or fallback to SERVER_MAC and SERVER_IP in config.h)
-void loadConfigFromEEPROM() {
-  EEPROM.begin(EEPROM_SIZE);
-  byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
-
-  if (magic == EEPROM_MAGIC_BYTE) {
-    // 1. Load MAC
-    for (int i = 0; i < 6; i++) {
-      activeMac[i] = EEPROM.read(EEPROM_MAC_ADDR + i);
-    }
-    macBytesToString(activeMac, activeMacStr);
-    Serial.printf("[STORAGE] Loaded Target MAC from EEPROM: %s\n", activeMacStr);
-
-    // 2. Load IP
-    bool validIpChar = true;
-    for (int i = 0; i < 16; i++) {
-      char c = (char)EEPROM.read(EEPROM_IP_ADDR + i);
-      activeServerIp[i] = c;
-      if (c == '\0') break;
-      if (!((c >= '0' && c <= '9') || c == '.')) validIpChar = false;
-    }
-    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
-
-    if (!validIpChar || strlen(activeServerIp) < 7) {
-      Serial.println(F("[STORAGE] Invalid IP in EEPROM. Falling back to SERVER_IP from config.h..."));
-      strncpy(activeServerIp, SERVER_IP, sizeof(activeServerIp) - 1);
-      saveIpToEEPROM(activeServerIp);
-    } else {
-      Serial.printf("[STORAGE] Loaded Target IP from EEPROM: %s\n", activeServerIp);
-    }
-  } else {
-    Serial.println(F("[STORAGE] EEPROM uninitialized. Initializing with fallback defaults from config.h..."));
-    if (parseMacAddress(SERVER_MAC, activeMac)) {
-      saveMacToEEPROM(activeMac);
-    } else {
-      Serial.println(F("[STORAGE] ERROR: Invalid default SERVER_MAC!"));
-    }
-    strncpy(activeServerIp, SERVER_IP, sizeof(activeServerIp) - 1);
-    activeServerIp[sizeof(activeServerIp) - 1] = '\0';
-    saveIpToEEPROM(activeServerIp);
-  }
-}
-
-// Send Wake-on-LAN UDP magic packet (102 bytes) to subnet broadcast using active configured MAC
-void sendWOLPacket() {
-  Serial.printf("[WOL] Preparing Wake-on-LAN packet for MAC: %s\n", activeMacStr);
-  
-  byte magicPacket[102];
-  memset(magicPacket, 0xFF, 6);
-
-  for (int i = 0; i < 16; i++) {
-    for (int m = 0; m < 6; m++) {
-      magicPacket[6 + (i * 6) + m] = activeMac[m];
-    }
-  }
-
-    // Ensure UDP socket is initialized and bound
-    udp.begin(9);
-
-    // Calculate subnet directed broadcast (e.g. 192.168.1.255)
-    IPAddress subnetBroadcast = ~WiFi.subnetMask() | WiFi.localIP();
-    IPAddress limitedBroadcast(255, 255, 255, 255);
-
-    // 1. Send to Subnet Broadcast on Port 9
-    udp.beginPacket(subnetBroadcast, 9);
-    udp.write(magicPacket, sizeof(magicPacket));
-    int res1 = udp.endPacket();
-
-    // 2. Send to Subnet Broadcast on Port 7
-    udp.beginPacket(subnetBroadcast, 7);
-    udp.write(magicPacket, sizeof(magicPacket));
-    int res2 = udp.endPacket();
-
-    // 3. Also send to 255.255.255.255 on Port 9
-    udp.beginPacket(limitedBroadcast, 9);
-    udp.write(magicPacket, sizeof(magicPacket));
-    int res3 = udp.endPacket();
-
-    Serial.printf("[WOL] Magic packet sent! Subnet %s:9 (ok=%d), :7 (ok=%d), 255.255.255.255:9 (ok=%d)\n", 
-                  subnetBroadcast.toString().c_str(), res1, res2, res3);
-    blinkLed(3, 100);
-}
-
-void connectWiFi() {
-  WiFi.mode(WIFI_STA);
-#ifdef DEVICE_HOSTNAME
-  WiFi.hostname(DEVICE_HOSTNAME);
-#else
-  WiFi.hostname("serverstarter");
-#endif
-
-  Serial.printf("[WiFi] Connecting to SSID: %s (Hostname: %s)...\n", 
-                WIFI_SSID, WiFi.hostname().c_str());
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 40) {
-    delay(500);
-    Serial.print(".");
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    digitalWrite(LED_PIN, HIGH); // Off when idle
-    Serial.print(F("\n[WiFi] Connected! IP Address: "));
-    Serial.println(WiFi.localIP());
-
-    udp.begin(9); // Initialize UDP listener/sender
-  } else {
-    Serial.println(F("\n[WiFi] Connection timeout. Retrying later..."));
-  }
-}
-
-// Probe local target server availability via TCP socket
-bool probeServer() {
-  IPAddress ip;
-  bool isIp = ip.fromString(activeServerIp);
-
-  WiFiClient client;
-  client.setTimeout(2000); // 2 second timeout
-
-  bool connected = false;
-  if (isIp) {
-    connected = client.connect(ip, SERVER_PORT);
-  } else {
-    connected = client.connect(activeServerIp, SERVER_PORT);
-  }
-
-  if (connected) {
-    client.stop();
-    Serial.printf("[PROBE] %s:%d -> ONLINE\n", activeServerIp, SERVER_PORT);
-    return true;
-  }
-
-  // Windows fallback: If checking port 22 (SSH) and it failed, try port 445 (Windows SMB)
-  if (SERVER_PORT == 22) {
-    if (isIp ? client.connect(ip, 445) : client.connect(activeServerIp, 445)) {
-      client.stop();
-      Serial.printf("[PROBE] %s:445 (Windows SMB) -> ONLINE\n", activeServerIp);
-      return true;
-    }
-  }
-
-  Serial.printf("[PROBE] %s:%d -> OFFLINE\n", activeServerIp, SERVER_PORT);
-  return false;
-}
-
-// Update server status on Cloudflare Worker (via plain HTTP for Core 2.3.0 stability)
-void updateServerStatusOnCloudflare(ServerState state) {
-  HTTPClient http;
-  String url = "http://" + String(CF_HOST) + "/server/ping";
-
-  if (http.begin(url)) {
-    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-    http.addHeader("Content-Type", "application/json");
-
-    String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
-    String payload   = "{\"status\":\"" + statusStr + "\"}";
-
-    Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
-    int httpCode = http.POST(payload);
-
-    if (httpCode > 0) {
-      Serial.printf("[CF] Response: %d\n", httpCode);
-      lastSentServerState = state;
-      lastCfKeepaliveTime = millis();
-    } else {
-      Serial.printf("[CF] HTTP POST failed, code: %d (%s)\n", 
-                    httpCode, http.errorToString(httpCode).c_str());
-    }
-    http.end();
-  } else {
-    Serial.println(F("[CF] Failed to connect HTTP client."));
-  }
-}
-
-// Check Cloudflare for pending WOL trigger (when server is offline)
-void checkWOLTrigger() {
-  HTTPClient http;
-  String url = "http://" + String(CF_HOST) + "/status";
-
-  if (http.begin(url)) {
-    http.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-
-    int httpCode = http.GET();
-    if (httpCode == 200) {
-      String payload = http.getString();
-      if (payload.indexOf("\"trigger\":true") != -1) {
-        Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
-        sendWOLPacket();
-        delay(300);
-        sendWOLPacket();
-
-        // Acknowledge trigger
-        HTTPClient ackHttp;
-        String ackUrl = "http://" + String(CF_HOST) + "/ack";
-        if (ackHttp.begin(ackUrl)) {
-          ackHttp.addHeader("Authorization", String("Bearer ") + AUTH_TOKEN);
-          ackHttp.addHeader("Content-Type", "application/json");
-          ackHttp.POST("{\"result\":\"SENT\"}");
-          ackHttp.end();
-          Serial.println(F("[TRIGGER] Acknowledged with Cloudflare."));
-        }
-      }
-    } else if (httpCode < 0) {
-      Serial.printf("[TRIGGER] HTTP GET failed, code: %d (%s)\n", 
-                    httpCode, http.errorToString(httpCode).c_str());
-    }
-    http.end();
-  }
-}
-
-// Local ESP8266 Web Server handlers (Ultra-lightweight plain HTML for low storage & RAM)
-void handleRoot() {
-  String html = F("<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>ESP8266 WOL</title>"
-                  "<style>body{font-family:sans-serif;margin:20px;background:#111;color:#eee}"
-                  "h2{margin-bottom:10px}.box{background:#222;padding:15px;border-radius:6px;max-width:320px}"
-                  "p{margin:6px 0}input{width:100%;box-sizing:border-box;padding:8px;margin-top:4px;border:1px solid #444;background:#333;color:#eee;border-radius:4px}"
-                  "button{background:#0284c7;color:#fff;border:none;padding:10px 18px;font-size:15px;border-radius:4px;cursor:pointer;width:100%;margin-top:10px}"
-                  "a{color:#38bdf8}</style></head><body>"
-                  "<div class='box'><h2>ESP8266 WOL Device</h2>"
-                  "<p><b>Server:</b> ");
-  html += (currentServerState == STATE_ONLINE) ? F("<span style='color:#4ade80'>ONLINE</span>") : (currentServerState == STATE_OFFLINE ? F("<span style='color:#f87171'>OFFLINE</span>") : F("UNKNOWN"));
-  html += F("</p><p><b>Target IP:</b> ");
-  html += activeServerIp;
-  html += F("</p><p><b>Target MAC:</b> ");
-  html += activeMacStr;
-  html += F("</p><p><b>Free Heap:</b> ");
-  html += String(ESP.getFreeHeap());
-  html += F(" bytes</p><p style='font-size:12px;color:#94a3b8'><b>Hostname:</b> "
-            "<a href='http://");
-  html += WiFi.hostname();
-  html += F(".local'>http://");
-  html += WiFi.hostname();
-  html += F(".local</a><br><small>(or via IP: http://");
-  html += WiFi.localIP().toString();
-  html += F(")</small></p>");
-  if (lastWolSentEpoch > 0 && (millis() - lastWolSentEpoch < 30000)) {
-    html += F("<p style='background:#0369a1;padding:8px;border-radius:4px;color:#fff;font-size:13px;margin:8px 0'>⚡ WOL Packet Sent!</p>");
-  }
-  html += F("<form method='POST' action='/trigger'><button type='submit'>Wake Server (Send WOL)</button></form>"
-            "<hr style='border:0;border-top:1px solid #333;margin:15px 0'>"
-            "<form method='POST' action='/update-config'>"
-            "<p style='font-size:13px;font-weight:bold;margin-bottom:2px'>Configure Target MAC:</p>"
-            "<input type='text' name='mac' value='");
-  html += activeMacStr;
-  html += F("' maxlength='17' required pattern='^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$'>"
-            "<p style='font-size:13px;font-weight:bold;margin:10px 0 2px'>Configure Target IP:</p>"
-            "<input type='text' name='ip' value='");
-  html += activeServerIp;
-  html += F("' maxlength='15' required pattern='^([0-9]{1,3}\\.){3}[0-9]{1,3}$'>"
-            "<button type='submit' style='background:#475569'>Save to Persistent Storage</button>"
-            "</form>"
-            "<p style='margin-top:12px;font-size:12px'><a href='/'>Refresh</a></p>"
-            "</div></body></html>");
-  server.send(200, "text/html", html);
-}
-
-void handleManualTrigger() {
-  Serial.println(F("[HTTP] Manual WOL trigger requested via ESP web server."));
-  sendWOLPacket();
-  delay(200);
-  sendWOLPacket();
-  lastWolSentEpoch = millis();
-
-  // Redirect back to root
-  server.sendHeader("Location", "/");
-  server.send(303);
-}
-
-void handleUpdateConfig() {
-  bool updated = false;
-
-  if (server.hasArg("mac")) {
-    String newMacStr = server.arg("mac");
-    newMacStr.trim();
-    byte newMac[6];
-    if (parseMacAddress(newMacStr.c_str(), newMac)) {
-      saveMacToEEPROM(newMac);
-      updated = true;
-      Serial.printf("[HTTP] Target MAC updated via web UI: %s\n", activeMacStr);
-    } else {
-      Serial.println(F("[HTTP] Invalid MAC received via web UI!"));
-    }
-  }
-
-  if (server.hasArg("ip")) {
-    String newIpStr = server.arg("ip");
-    newIpStr.trim();
-    IPAddress testIp;
-    if (testIp.fromString(newIpStr)) {
-      saveIpToEEPROM(newIpStr.c_str());
-      updated = true;
-      Serial.printf("[HTTP] Target IP updated via web UI: %s\n", activeServerIp);
-    } else {
-      Serial.println(F("[HTTP] Invalid IP received via web UI!"));
-    }
-  }
-
-  if (updated) {
-    // Re-probe target immediately so state reflects new target IP
-    bool isOnline = probeServer();
-    currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
-    lastSentServerState = currentServerState;
-    updateServerStatusOnCloudflare(currentServerState);
-  }
-
-  server.sendHeader("Location", "/");
-  server.send(303);
-}
-
-void handleStatusJson() {
-  String json = "{\"server\":\"";
-  json += (currentServerState == STATE_ONLINE) ? "ONLINE" : (currentServerState == STATE_OFFLINE ? "OFFLINE" : "UNKNOWN");
-  json += "\",\"ip\":\"" + String(activeServerIp) + "\",\"mac\":\"" + String(activeMacStr) + "\",\"free_heap\":" + String(ESP.getFreeHeap()) + "}";
-  server.send(200, "application/json", json);
-}
 
 void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, HIGH); // LED off initially
+  digitalWrite(LED_PIN, HIGH); // Off initially (Active LOW)
 
   delay(1000);
-  Serial.println(F("\n========================================"));
-  Serial.println(F("ESP8266 Standalone ServerStarter v1.0"));
-  Serial.println(F("========================================"));
+  Serial.println(F("\n=============================================="));
+  Serial.println(F("ESP8266 Standalone ServerStarter (Production)"));
+  Serial.println(F("=============================================="));
 
-  // Initialize and load persistent Target MAC and IP from EEPROM (falls back to config.h if empty)
+  // 1. Initialize hardware telemetry
+  initTelemetry();
+
+  // 2. Load persistent configuration from EEPROM (falls back to config.h if empty)
   loadConfigFromEEPROM();
 
-  connectWiFi();
-
-  // Start local plain HTML web server on port 80
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/trigger", HTTP_POST, handleManualTrigger);
-  server.on("/update-mac", HTTP_POST, handleUpdateConfig); // backwards compatibility
-  server.on("/update-config", HTTP_POST, handleUpdateConfig);
-  server.on("/status", HTTP_GET, handleStatusJson);
-  server.begin();
-  Serial.print(F("[Web] Local HTTP server active at: http://"));
-  Serial.println(WiFi.localIP());
-
-  // Initialize mDNS responder (http://<hostname>.local)
-  const char* hName = WiFi.hostname().c_str();
-  if (MDNS.begin(hName)) {
-    MDNS.addService("http", "tcp", 80);
-    Serial.printf("[mDNS] Responder active! Access via: http://%s.local\n", hName);
-  } else {
-    Serial.println(F("[mDNS] Error setting up MDNS responder!"));
+  // 3. Attempt Wi-Fi connection; if timeout or unconfigured, launch Setup AP
+  bool wifiOk = connectWiFi();
+  if (!wifiOk) {
+    Serial.println(F("[Boot] Wi-Fi connection unavailable. Launching Setup AP..."));
+    startSetupAP();
   }
 
-  // Probe target server immediately upon boot so state is not UNKNOWN
-  bool isOnline = probeServer();
-  currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
-  lastSentServerState = currentServerState;
-  lastServerCheckTime = millis();
-  updateServerStatusOnCloudflare(currentServerState);
+  // 4. Initialize HTTP web server and mDNS responder
+  initWebServer();
+
+  // 5. If Wi-Fi connected, start NTP time service and initial sync
+  if (wifiOk) {
+    initTimeService(activeTzOffsetHours);
+
+    // Initial server probe & Cloudflare sync
+    bool isOnline = probeServer();
+    currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
+    lastSentServerState = currentServerState;
+    lastServerCheckTime = millis();
+    updateServerStatusOnCloudflare(currentServerState);
+  }
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
-    connectWiFi();
-    delay(2000);
-    return;
+  // Service captive portal DNS if Setup AP is active
+  if (isApModeActive) {
+    dnsServer.processNextRequest();
   }
 
-  // Handle incoming HTTP client requests on ESP
+  // Handle local HTTP client requests and mDNS
   server.handleClient();
   MDNS.update();
 
+  // Update NTP status and track minimum free heap
+  updateTimeService();
+  updateMinFreeHeap();
+
+  // If running in Setup AP mode without station connection, skip polling loops
+  if (WiFi.status() != WL_CONNECTED) {
+    delay(10);
+    return;
+  }
+
   unsigned long currentMillis = millis();
 
-  // 1. Probe local LAN server every SERVER_CHECK_INTERVAL_MS
-  if (currentMillis - lastServerCheckTime >= SERVER_CHECK_INTERVAL_MS) {
+  // 1. Periodic Local LAN Server Probe (using dynamic stored interval)
+  unsigned long probeIntervalMs = (unsigned long)activeServerCheckIntervalSec * 1000UL;
+  if (currentMillis - lastServerCheckTime >= probeIntervalMs || lastServerCheckTime == 0) {
     lastServerCheckTime = currentMillis;
 
     bool isOnline = probeServer();
     currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
 
-    // Immediate state change sync
+    // Immediate state transition sync to Cloudflare
     if (currentServerState != lastSentServerState) {
       Serial.printf("[STATE] Target transitioned to: %s\n", isOnline ? "ONLINE" : "OFFLINE");
       updateServerStatusOnCloudflare(currentServerState);
     }
   }
 
-  // 2. Periodic WOL trigger check (uses Cloudflare GET /status read operations, 100k/day free)
-  if (currentMillis - lastCfSyncTime >= CF_SYNC_INTERVAL_MS) {
+  // 2. Periodic Cloudflare Sync & Trigger Check (when server is offline)
+  unsigned long cfSyncIntervalMs = (unsigned long)activeCfSyncIntervalSec * 1000UL;
+  if (currentMillis - lastCfSyncTime >= cfSyncIntervalMs || lastCfSyncTime == 0) {
     lastCfSyncTime = currentMillis;
 
-    // If server is currently offline, check if user requested a wake-up
-    if (currentServerState == STATE_OFFLINE) {
+    if (currentServerState == STATE_OFFLINE || currentServerState == STATE_UNKNOWN) {
       checkWOLTrigger();
     }
   }
 
-  // 3. Periodic Keepalive to Cloudflare (throttled to 15 minutes to conserve free KV write tier)
-  // State transitions are already sent immediately in step 1.
+  // 3. Periodic Keepalive to Cloudflare (throttled to 15 min to conserve KV writes)
   if (currentMillis - lastCfKeepaliveTime >= CF_KEEPALIVE_INTERVAL_MS || lastCfKeepaliveTime == 0) {
     lastCfKeepaliveTime = currentMillis;
     updateServerStatusOnCloudflare(currentServerState);
