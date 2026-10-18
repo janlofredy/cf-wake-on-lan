@@ -6,15 +6,18 @@ workers_dev = true
 # ==============================================================================
 # KV Namespace Binding: WOL_STORE
 # ==============================================================================
-# For Cloudflare Dashboard (Deploy from Git):
-# Do NOT hardcode your namespace ID here in a public repo!
-# Instead, add the binding directly in the Cloudflare Dashboard:
-#   Workers & Pages -> cf-wake-on-lan -> Settings -> Bindings -> Add KV Namespace
-#   - Variable name: WOL_STORE
-#   - KV namespace: select your WOL_STORE namespace
+# For Cloudflare Git Deployment (Auto-Deploys):
+# Set an Environment Variable in the Cloudflare Dashboard:
+#   Workers & Pages -> cf-wake-on-lan -> Settings -> Variables and Secrets:
+#   - Name: WOL_KV_ID
+#   - Value: <your_kv_namespace_id>
+# The build script automatically injects this ID during Cloudflare Builds so
+# your personal namespace ID is never committed to public git, and Wrangler
+# never removes the binding!
 #
-# For CLI Deployment (npx wrangler deploy):
-# Uncomment below and insert your personal KV namespace ID:
+# For Local CLI Deployment (npx wrangler deploy):
+# Either run: `WOL_KV_ID=<your_id> npm run deploy`
+# Or uncomment below and enter your namespace ID directly:
 # [[kv_namespaces]]
 # binding = "WOL_STORE"
 # id = "YOUR_KV_NAMESPACE_ID"

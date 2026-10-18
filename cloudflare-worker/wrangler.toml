@@ -5,12 +5,10 @@ compatibility_date = "2024-01-01"
 # ==============================================================================
 # KV Namespace Binding: WOL_STORE
 # ==============================================================================
-# For Cloudflare Dashboard (Deploy from Git):
-# Add the binding in Dashboard -> Workers & Pages -> Settings -> Bindings:
-#   Variable name: WOL_STORE
-#   KV namespace: WOL_STORE
+# Set WOL_KV_ID in Cloudflare Dashboard -> Settings -> Variables and Secrets.
+# The build script automatically injects it into wrangler.toml during deploy.
 #
-# For CLI Deployment (npx wrangler deploy):
+# For Local CLI Deployment (npx wrangler deploy):
 # [[kv_namespaces]]
 # binding = "WOL_STORE"
 # id = "YOUR_KV_NAMESPACE_ID"

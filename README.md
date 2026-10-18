@@ -107,7 +107,16 @@ sequenceDiagram
 
 Deploy the Cloudflare Worker using either the Cloudflare Dashboard or Wrangler CLI.
 
-#### Deploy via Wrangler CLI:
+#### Option A: Deploy via Cloudflare Git Integration (Recommended for Auto-Deploys)
+1. In Cloudflare Dashboard, connect your GitHub repository under **Workers & Pages**.
+2. Create your KV namespace under **Storage & Databases -> KV** (named `WOL_STORE`).
+3. Add your KV namespace ID as an environment variable in **Workers & Pages -> your worker -> Settings -> Variables and Secrets**:
+   - Variable Name: **`WOL_KV_ID`**
+   - Value: `<your_kv_namespace_id>`
+   *(The build script automatically injects this ID during Cloudflare Builds so your personal ID stays private and out of public git, while preventing Wrangler from wiping the binding!)*
+4. Set your secret device and user access token under **Variables and Secrets** (or run `npx wrangler secret put API_KEY`).
+
+#### Option B: Deploy via Wrangler CLI
 1. Log in to Cloudflare:
    ```bash
    npx wrangler login
@@ -116,14 +125,13 @@ Deploy the Cloudflare Worker using either the Cloudflare Dashboard or Wrangler C
    ```bash
    npx wrangler kv namespace create WOL_STORE
    ```
-3. Copy the returned `id` and paste it into [`wrangler.toml`](wrangler.toml).
-4. Set your secret device and user access tokens:
+3. Set your secret access token:
    ```bash
    npx wrangler secret put API_KEY
    ```
-5. Deploy:
+4. Deploy with your KV ID:
    ```bash
-   npm run deploy
+   WOL_KV_ID="<your_kv_namespace_id>" npm run deploy
    ```
 
 ---
