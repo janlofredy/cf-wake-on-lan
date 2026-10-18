@@ -237,7 +237,7 @@ inline void handleRoot() {
   getFormattedUptime(upBuf, sizeof(upBuf));
 
   String html;
-  html.reserve(7000);
+  html.reserve(8500);
   html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>ServerStarter Dashboard</title><style>");
   html += (__FlashStringHelper*)CSS_COMMON;
@@ -252,11 +252,49 @@ inline void handleRoot() {
     html += F("<span class='badge bg-unk'>UNKNOWN</span>");
   }
 
-  html += F("</h2>"
-            "<div class='grid2 mt'>"
-            "<form method='POST' action='/trigger'><button type='submit' class='btn btn-w100'>🚀 Wake Server (WOL)</button></form>"
-            "<form method='POST' action='/reset-setup'><button type='submit' class='btn btn-sec btn-w100' onclick=\"return confirm('Enter Setup AP mode?')\">⚙️ Setup AP Mode</button></form>"
-            "</div></div>");
+  html += F("</h2>");
+  html += "<div style='color:#8b949e;margin:2px 0 8px 0'>Active Target: <b style='color:#58a6ff'>" + String(activeServerName) + "</b> &nbsp;(<span class='val'>" + String(activeMacStr) + "</span> &bull; <span class='val'>" + String(activeServerIp) + ":" + String(activeServerPort) + "</span>)</div>";
+  html += "<div class='grid2 mt'>"
+          "<form method='POST' action='/trigger'><button type='submit' class='btn btn-w100'>🚀 Wake " + String(activeServerName) + " (WOL)</button></form>"
+          "<form method='POST' action='/reset-setup'><button type='submit' class='btn btn-sec btn-w100' onclick=\"return confirm('Enter Setup AP mode?')\">⚙️ Setup AP Mode</button></form>"
+          "</div></div>";
+
+  // PC Profiles Management
+  html += "<div class='box'><h2><span>🖥️ PC Profiles (" + String(pcProfileCount) + "/" + String(MAX_PC_PROFILES) + ")</span></h2>"
+          "<table><thead><tr><th>Name</th><th>MAC Address</th><th>IP:Port</th><th>Action</th></tr></thead><tbody>";
+  for (uint8_t i = 0; i < pcProfileCount; i++) {
+    char pMac[18];
+    macBytesToString(pcProfiles[i].mac, pMac);
+    html += "<tr><td class='val'>" + String(pcProfiles[i].name) + "</td>";
+    html += "<td class='val'>" + String(pMac) + "</td>";
+    html += "<td class='val'>" + String(pcProfiles[i].ip) + ":" + String(pcProfiles[i].port) + "</td>";
+    html += "<td>";
+    if (i == activeProfileIdx) {
+      html += F("<span class='badge bg-on'>ACTIVE</span>");
+    } else {
+      html += "<form method='POST' action='/select-profile' style='display:inline'><input type='hidden' name='idx' value='" + String(i) + "'>"
+              "<button type='submit' class='btn' style='padding:2px 8px;font-size:11px'>Activate</button></form>";
+    }
+    if (pcProfileCount > 1) {
+      html += "<form method='POST' action='/delete-profile' style='display:inline;margin-left:4px'><input type='hidden' name='idx' value='" + String(i) + "'>"
+              "<button type='submit' class='btn btn-dan' style='padding:2px 8px;font-size:11px' onclick=\"return confirm('Delete this PC profile?')\">✕</button></form>";
+    }
+    html += "</td></tr>";
+  }
+  html += F("</tbody></table>");
+
+  if (pcProfileCount < MAX_PC_PROFILES) {
+    html += F("<form method='POST' action='/add-profile' style='margin-top:10px;border-top:1px solid #21262d;padding-top:8px'>"
+              "<div style='font-size:11px;font-weight:600;color:#8b949e;margin-bottom:4px'>+ Add PC Profile:</div>"
+              "<div class='grid3'>"
+              "<input type='text' name='name' placeholder='Name' required maxlength='15'>"
+              "<input type='text' name='mac' placeholder='MAC (AA:BB:CC:...)' pattern='^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$' required maxlength='17'>"
+              "<input type='text' name='ip' placeholder='LAN IP (192.168.1.X)' pattern='^([0-9]{1,3}\\.){3}[0-9]{1,3}$' required maxlength='15'>"
+              "</div>"
+              "<div class='mt'><button type='submit' class='btn btn-sec btn-w100'>+ Add PC Profile</button></div>"
+              "</form>");
+  }
+  html += F("</div>");
 
   // System Telemetry
   html += F("<div class='box'><h2><span>📊 Device Telemetry</span></h2><table>"
@@ -286,10 +324,12 @@ inline void handleRoot() {
 
   // LAN Server Probe Telemetry
   html += F("<div class='box'><h2><span>🎯 LAN Server Probe</span></h2><table>"
-            "<tr><td class='lbl'>Target Address:</td><td class='val'>");
+            "<tr><td class='lbl'>Target Name:</td><td class='val'>");
+  html += activeServerName;
+  html += F("</td></tr><tr><td class='lbl'>Target Address:</td><td class='val'>");
   html += activeServerIp;
   html += F(" (Port ");
-  html += String(SERVER_PORT);
+  html += String(activeServerPort);
   html += F(")</td></tr><tr><td class='lbl'>Target MAC:</td><td class='val'>");
   html += activeMacStr;
   html += F("</td></tr><tr><td class='lbl'>Last Probe Latency:</td><td class='val'>");
@@ -402,6 +442,60 @@ inline void handleManualTrigger() {
   server.send(303);
 }
 
+// Handler: Switch Active PC Profile
+inline void handleSelectProfile() {
+  if (server.hasArg("idx")) {
+    uint8_t idx = server.arg("idx").toInt();
+    if (setActiveProfile(idx)) {
+      bool isOnline = probeServer();
+      currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
+      lastSentServerState = currentServerState;
+      updateServerStatusOnCloudflare(currentServerState);
+    }
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+// Handler: Add a New PC Profile
+inline void handleAddProfile() {
+  if (server.hasArg("name") && server.hasArg("mac") && server.hasArg("ip")) {
+    String name = server.arg("name");
+    name.trim();
+    String macStr = server.arg("mac");
+    macStr.trim();
+    String ipStr = server.arg("ip");
+    ipStr.trim();
+    uint16_t port = 22;
+    if (server.hasArg("port")) {
+      int p = server.arg("port").toInt();
+      if (p > 0 && p <= 65535) port = (uint16_t)p;
+    }
+
+    byte parsedMac[6];
+    if (name.length() > 0 && parseMacAddress(macStr.c_str(), parsedMac)) {
+      addProfile(name.c_str(), parsedMac, ipStr.c_str(), port);
+    }
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
+// Handler: Delete a PC Profile
+inline void handleDeleteProfile() {
+  if (server.hasArg("idx")) {
+    uint8_t idx = server.arg("idx").toInt();
+    if (deleteProfile(idx)) {
+      bool isOnline = probeServer();
+      currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
+      lastSentServerState = currentServerState;
+      updateServerStatusOnCloudflare(currentServerState);
+    }
+  }
+  server.sendHeader("Location", "/");
+  server.send(303);
+}
+
 // Handler: Update configuration from root dashboard form
 inline void handleUpdateConfig() {
   bool updated = false;
@@ -497,10 +591,11 @@ inline void handleStatusJson() {
 
   // Target Server
   json += "\"server\":{";
+  json += "\"name\":\"" + String(activeServerName) + "\",";
   json += "\"status\":\"" + String(currentServerState == STATE_ONLINE ? "ONLINE" : (currentServerState == STATE_OFFLINE ? "OFFLINE" : "UNKNOWN")) + "\",";
   json += "\"ip\":\"" + String(activeServerIp) + "\",";
   json += "\"mac\":\"" + String(activeMacStr) + "\",";
-  json += "\"port\":" + String(SERVER_PORT) + ",";
+  json += "\"port\":" + String(activeServerPort) + ",";
   json += "\"last_probe_ms\":" + String(lastProbeLatencyMs) + ",";
   json += "\"success_rate\":" + String(getProbeSuccessRate(), 2) + ",";
   json += "\"last_success\":\"" + String(lastSuccessProbeStr) + "\",";
@@ -508,6 +603,25 @@ inline void handleStatusJson() {
   json += "\"total_probes\":" + String(totalProbes) + ",";
   json += "\"consecutive_fails\":" + String(consecutiveFailProbes);
   json += "},";
+
+  // PC Profiles
+  json += "\"profiles\":{";
+  json += "\"count\":" + String(pcProfileCount) + ",";
+  json += "\"active_index\":" + String(activeProfileIdx) + ",";
+  json += "\"active_name\":\"" + String(activeServerName) + "\",";
+  json += "\"list\":[";
+  for (uint8_t i = 0; i < pcProfileCount; i++) {
+    char pMac[18];
+    macBytesToString(pcProfiles[i].mac, pMac);
+    if (i > 0) json += ",";
+    json += "{\"index\":" + String(i) + ",";
+    json += "\"name\":\"" + String(pcProfiles[i].name) + "\",";
+    json += "\"mac\":\"" + String(pMac) + "\",";
+    json += "\"ip\":\"" + String(pcProfiles[i].ip) + "\",";
+    json += "\"port\":" + String(pcProfiles[i].port) + ",";
+    json += "\"is_active\":" + String(i == activeProfileIdx ? "true" : "false") + "}";
+  }
+  json += "]},";
 
   // Cloudflare
   json += "\"cloudflare\":{";
@@ -562,6 +676,9 @@ inline void initWebServer() {
   server.on("/setup", HTTP_GET, handleSetupPage);
   server.on("/save-setup", HTTP_POST, handleSaveSetup);
   server.on("/trigger", HTTP_POST, handleManualTrigger);
+  server.on("/select-profile", HTTP_POST, handleSelectProfile);
+  server.on("/add-profile", HTTP_POST, handleAddProfile);
+  server.on("/delete-profile", HTTP_POST, handleDeleteProfile);
   server.on("/update-config", HTTP_POST, handleUpdateConfig);
   server.on("/update-mac", HTTP_POST, handleUpdateConfig); // Backwards compatibility
   server.on("/reset-setup", HTTP_POST, handleResetSetup);

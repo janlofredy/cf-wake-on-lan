@@ -53,18 +53,23 @@ sequenceDiagram
 2. **NTP Date & Time Synchronization**:
    - Background SNTP synchronization via `pool.ntp.org` and `time.google.com`.
    - Displays real-time timestamps (`YYYY-MM-DD HH:MM:SS`) with persistent timezone offset.
-3. **Comprehensive Device & Network Telemetry**:
+3. **Multi-PC Profiles (Up to 5 Saved Devices, 1 Active)**:
+   - Store up to 5 target PC profiles in persistent EEPROM (Name, MAC, LAN IP, Port).
+   - Exactly **1 PC profile is active** at any time. The Starter Device targets all WOL broadcasts and TCP reachability probes to the active profile.
+   - Switch active PC with one click on the local dashboard, or add and delete profiles directly in the Web UI.
+   - Automatically synchronizes the active PC name, MAC, and IP to the Cloudflare Worker cloud controller on every ping.
+4. **Comprehensive Device & Network Telemetry**:
    - **Device Lifecycle**: Boot Timestamp, Reset Reason (*Power On*, *Hardware Watchdog*, *Software Restart*), Uptime, Current & Lowest Free Heap.
-   - **Target Server Probe**: Last Successful Ping, Last Failed Ping, Probe Latency (ms), Total Probes, Consecutive Failures, and Success Rate (%).
+   - **Target Server Probe**: Target Name, Port, Last Successful Ping, Last Failed Ping, Probe Latency (ms), Total Probes, Consecutive Failures, and Success Rate (%).
    - **Cloudflare Integration**: Last Sync HTTP Status, Round-Trip Latency (ms), Sync Success Rate (%), Last Successful/Failed Syncs, and Total WOL Dispatches.
    - **Wi-Fi Diagnostics**: RSSI (dBm & %), Reconnection Counter, IP, Gateway, Subnet, and Hostname.
-4. **Rolling 10-Request Activity Log**:
+5. **Rolling 10-Request Activity Log**:
    - In-memory circular buffer recording the last 10 actions (`CF /server/ping`, `CF /status`, `CF /ack`, `LAN Probe`, `WOL Packet`) with execution timestamps, status codes, and latency.
-5. **Configurable Polling Intervals**:
+6. **Configurable Polling Intervals**:
    - Local LAN probe rate (default: 5s) and Cloudflare sync rate (default: 30s) are fully editable via the Web UI and saved to persistent EEPROM.
-6. **Ultra-Minimal Plain Table Web UI & JSON API**:
+7. **Ultra-Minimal Plain Table Web UI & JSON API**:
    - Ultra-fast, lightweight plain-table dark theme dashboard at `http://serverstarter.local`.
-   - Machine-readable JSON telemetry endpoint at `/status`.
+   - Machine-readable JSON telemetry endpoint at `/status` with full profile metadata.
 
 ---
 
@@ -188,10 +193,13 @@ Access the local dashboard on your network at:
 - Or **`http://<ESP_DEVICE_IP>`**
 
 ### Endpoints:
-- `GET /`: Ultra-minimal dark theme dashboard displaying server status, full telemetry, Cloudflare stats, rolling 10-request activity log, and quick configuration form.
-- `GET /status`: Machine-readable JSON telemetry API.
-- `POST /trigger`: Dispatches UDP Wake-on-LAN packet immediately.
-- `POST /update-config`: Updates Target MAC, IP, Timezone, and polling rates in EEPROM.
+- `GET /`: Ultra-minimal dark theme dashboard displaying active target PC, PC Profiles table, full telemetry, Cloudflare stats, rolling 10-request activity log, and quick configuration form.
+- `GET /status`: Machine-readable JSON telemetry API with active profile and saved profiles array.
+- `POST /trigger`: Dispatches UDP Wake-on-LAN packet immediately to the active PC.
+- `POST /select-profile`: Activates a saved PC profile (`idx=0..4`), triggering an immediate LAN probe and Cloudflare status sync.
+- `POST /add-profile`: Adds a new target PC profile (`name`, `mac`, `ip`, `port`) up to 5 profiles total.
+- `POST /delete-profile`: Deletes a saved profile (`idx=0..4`) while preserving at least 1 profile.
+- `POST /update-config`: Updates Target MAC, IP, Timezone, and polling rates in EEPROM for the active profile.
 - `POST /reset-setup`: Re-enters `ServerStarter-Setup` AP mode on demand.
 
 ---

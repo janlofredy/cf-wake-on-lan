@@ -30,13 +30,13 @@ inline bool probeServer() {
 
   bool connected = false;
   if (isIp) {
-    connected = client.connect(ip, SERVER_PORT);
+    connected = client.connect(ip, activeServerPort);
   } else {
-    connected = client.connect(activeServerIp, SERVER_PORT);
+    connected = client.connect(activeServerIp, activeServerPort);
   }
 
   // Windows fallback: If checking port 22 (SSH) and it failed, try port 445 (Windows SMB)
-  if (!connected && SERVER_PORT == 22) {
+  if (!connected && activeServerPort == 22) {
     if (isIp ? client.connect(ip, 445) : client.connect(activeServerIp, 445)) {
       connected = true;
     }
@@ -64,14 +64,14 @@ inline bool probeServer() {
     consecutiveFailProbes = 0;
     strncpy(lastSuccessProbeStr, timeBuf, sizeof(lastSuccessProbeStr) - 1);
     lastSuccessProbeStr[sizeof(lastSuccessProbeStr) - 1] = '\0';
-    Serial.printf("[PROBE] %s:%d -> ONLINE (%ums)\n", activeServerIp, SERVER_PORT, lastProbeLatencyMs);
+    Serial.printf("[PROBE] [%s] %s:%u -> ONLINE (%ums)\n", activeServerName, activeServerIp, activeServerPort, lastProbeLatencyMs);
   } else {
     failedProbes++;
     consecutiveFailProbes++;
     consecutiveSuccessProbes = 0;
     strncpy(lastFailProbeStr, timeBuf, sizeof(lastFailProbeStr) - 1);
     lastFailProbeStr[sizeof(lastFailProbeStr) - 1] = '\0';
-    Serial.printf("[PROBE] %s:%d -> OFFLINE (%ums)\n", activeServerIp, SERVER_PORT, lastProbeLatencyMs);
+    Serial.printf("[PROBE] [%s] %s:%u -> OFFLINE (%ums)\n", activeServerName, activeServerIp, activeServerPort, lastProbeLatencyMs);
   }
 
   addRequestLog("LAN Probe", connected ? 200 : 0, lastProbeLatencyMs);
@@ -93,9 +93,15 @@ inline void updateServerStatusOnCloudflare(ServerState state) {
     http.addHeader("Content-Type", "application/json");
 
     String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
-    String payload   = "{\"status\":\"" + statusStr + "\",\"firmware_version\":\"" + String(FIRMWARE_VERSION) + "\"}";
+    String payload   = "{\"status\":\"" + statusStr + "\""
+                     + ",\"firmware_version\":\"" + String(FIRMWARE_VERSION) + "\""
+                     + ",\"target_name\":\"" + String(activeServerName) + "\""
+                     + ",\"target_mac\":\"" + String(activeMacStr) + "\""
+                     + ",\"target_ip\":\"" + String(activeServerIp) + "\""
+                     + "}";
 
-    Serial.printf("[CF] Syncing state '%s' (FW: %s) to %s...\n", statusStr.c_str(), FIRMWARE_VERSION, url.c_str());
+    Serial.printf("[CF] Syncing state '%s' for '%s' (%s) to %s...\n",
+                  statusStr.c_str(), activeServerName, activeMacStr, url.c_str());
     int httpCode = http.POST(payload);
     lastCfLatencyMs = (uint16_t)(millis() - startT);
     lastCfHttpCode = httpCode;

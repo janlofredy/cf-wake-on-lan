@@ -424,7 +424,15 @@ function renderDashboardHTML(hasCfAccess = false) {
 
         <div class="stats-grid">
           <div class="stat-box">
-            <div class="stat-label">AOD Device (ESP8266)</div>
+            <div class="stat-label">Active Target PC</div>
+            <div id="targetPcName" class="stat-value">Checking...</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Target Details</div>
+            <div id="targetPcDetails" class="stat-value" style="font-size:0.75rem">--</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">Starter Device</div>
             <div id="aodStatus" class="stat-value">Checking...</div>
           </div>
           <div class="stat-box">
@@ -482,6 +490,8 @@ function renderDashboardHTML(hasCfAccess = false) {
 
     const statusBadge = document.getElementById('statusBadge');
     const badgeText = document.getElementById('badgeText');
+    const targetPcName = document.getElementById('targetPcName');
+    const targetPcDetails = document.getElementById('targetPcDetails');
     const aodStatus = document.getElementById('aodStatus');
     const lastSeen = document.getElementById('lastSeen');
     const alertBox = document.getElementById('alertBox');
@@ -643,6 +653,17 @@ function renderDashboardHTML(hasCfAccess = false) {
           autoOnToggle.checked = data.auto_turn_on;
         }
 
+        // Update Active Target PC details
+        const pcLabel = data.target_name || 'Server';
+        if (targetPcName) {
+          targetPcName.textContent = pcLabel;
+        }
+        if (targetPcDetails) {
+          const mac = data.mac || '';
+          const ip = data.target_ip || '';
+          targetPcDetails.textContent = mac ? (ip ? (mac + ' • ' + ip) : mac) : '--';
+        }
+
         // Update Server Status Badge
         statusBadge.className = 'badge';
         const serverStatus = (data.server_status || '').toUpperCase();
@@ -651,17 +672,17 @@ function renderDashboardHTML(hasCfAccess = false) {
           statusBadge.classList.add('badge-online');
           badgeText.textContent = 'ONLINE';
           triggerBtn.disabled = true;
-          triggerBtn.innerHTML = '<span>✅</span> Server is Running';
+          triggerBtn.innerHTML = '<span>✅</span> ' + pcLabel + ' is Running';
         } else if (serverStatus === 'BOOTING' || data.trigger) {
           statusBadge.classList.add('badge-booting');
           badgeText.textContent = 'BOOTING...';
           triggerBtn.disabled = true;
-          triggerBtn.innerHTML = '<span>⏳</span> Booting in Progress...';
+          triggerBtn.innerHTML = '<span>⏳</span> Booting ' + pcLabel + '...';
         } else {
           statusBadge.classList.add('badge-offline');
           badgeText.textContent = 'OFFLINE';
           triggerBtn.disabled = false;
-          triggerBtn.innerHTML = '<span>🚀</span> Start Server (WOL)';
+          triggerBtn.innerHTML = '<span>🚀</span> Start ' + pcLabel + ' (WOL)';
         }
 
         // AOD Device health
@@ -755,7 +776,10 @@ async function getAppState(env) {
   try {
     const raw = await env.WOL_STORE.get("wol_state");
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!parsed.target_name) parsed.target_name = "Default PC";
+      if (!parsed.target_ip) parsed.target_ip = "";
+      return parsed;
     }
   } catch (err) {
     console.error("Error reading wol_state from KV:", err);
@@ -775,7 +799,9 @@ async function getAppState(env) {
     return {
       trigger: pending === "true" || pending === "1",
       auto_turn_on: autoOn === "true",
+      target_name: "Default PC",
       target_mac: targetMac || "",
+      target_ip: "",
       server_status: (serverStatus || "UNKNOWN").toUpperCase(),
       server_last_seen: lastSeen || null,
       last_wol_sent: lastWolSent || null,
@@ -787,7 +813,9 @@ async function getAppState(env) {
     return {
       trigger: false,
       auto_turn_on: false,
+      target_name: "Default PC",
       target_mac: "",
+      target_ip: "",
       server_status: "UNKNOWN",
       server_last_seen: null,
       last_wol_sent: null,
@@ -926,7 +954,9 @@ export default {
         JSON.stringify({
           trigger: shouldTrigger,
           auto_turn_on: Boolean(state.auto_turn_on),
+          target_name: state.target_name || "Active Target",
           mac: state.target_mac || "",
+          target_ip: state.target_ip || "",
           server_status: state.server_status || "UNKNOWN",
           server_last_seen: state.server_last_seen || null,
           last_wol_sent: state.last_wol_sent || null,
@@ -1020,16 +1050,24 @@ export default {
 
       const incomingStatus = (body.status || "ONLINE").toUpperCase();
       const incomingFwVersion = body.firmware_version || null;
+      const incomingTargetName = body.target_name || null;
+      const incomingTargetMac = body.target_mac || null;
+      const incomingTargetIp = body.target_ip || null;
       const now = Date.now();
       const state = await getAppState(env);
 
-      // KV optimization: only write to KV if state changed, firmware version changed, OR periodic keepalive elapsed (15 min)
+      // KV optimization: only write to KV if state changed, firmware version changed, target changed, OR periodic keepalive elapsed (15 min)
       const currentStatus = (state.server_status || "").toUpperCase();
       const statusChanged = currentStatus !== incomingStatus;
       const fwVersionChanged = Boolean(incomingFwVersion && state.firmware_version !== incomingFwVersion);
+      const targetChanged = Boolean(
+        (incomingTargetName && state.target_name !== incomingTargetName) ||
+        (incomingTargetMac && state.target_mac !== incomingTargetMac) ||
+        (incomingTargetIp && state.target_ip !== incomingTargetIp)
+      );
       const keepaliveDue = (now - Number(state.aod_last_ping_epoch || 0)) >= (15 * 60 * 1000);
 
-      if (statusChanged || fwVersionChanged || keepaliveDue) {
+      if (statusChanged || fwVersionChanged || targetChanged || keepaliveDue) {
         state.server_status = incomingStatus;
         if (incomingStatus === "ONLINE") {
           state.server_last_seen = new Date(now).toISOString();
@@ -1037,6 +1075,9 @@ export default {
         if (incomingFwVersion) {
           state.firmware_version = incomingFwVersion;
         }
+        if (incomingTargetName) state.target_name = incomingTargetName;
+        if (incomingTargetMac) state.target_mac = incomingTargetMac;
+        if (incomingTargetIp) state.target_ip = incomingTargetIp;
         state.aod_last_ping_epoch = now;
         await saveAppState(env, state);
       }
@@ -1045,7 +1086,8 @@ export default {
         JSON.stringify({ 
           success: true, 
           server_status: incomingStatus,
-          kv_write_occurred: statusChanged || fwVersionChanged || keepaliveDue,
+          target_name: state.target_name || incomingTargetName,
+          kv_write_occurred: statusChanged || fwVersionChanged || targetChanged || keepaliveDue,
           worker_version: WORKER_VERSION
         }),
         { 
