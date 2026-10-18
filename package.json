@@ -4,9 +4,7 @@
   "description": "Cloudflare Worker & Firmware for Always-On Wake-on-LAN server starter",
   "main": "cloudflare-worker/src/index.js",
   "scripts": {
-    "postinstall": "node scripts/prepare-deploy.js",
-    "predeploy": "node scripts/prepare-deploy.js",
-    "deploy": "node scripts/prepare-deploy.js && wrangler deploy",
+    "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
   "devDependencies": {

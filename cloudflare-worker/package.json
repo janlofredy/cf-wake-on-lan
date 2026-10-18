@@ -4,9 +4,7 @@
   "description": "Cloudflare Worker trigger endpoint using KV store for Wake-on-LAN microcontrollers",
   "main": "src/index.js",
   "scripts": {
-    "postinstall": "node ../scripts/prepare-deploy.js",
-    "predeploy": "node ../scripts/prepare-deploy.js",
-    "deploy": "node ../scripts/prepare-deploy.js && wrangler deploy"
+    "deploy": "wrangler deploy"
   },
   "dependencies": {}
 }

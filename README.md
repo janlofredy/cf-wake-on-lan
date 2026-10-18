@@ -105,33 +105,41 @@ sequenceDiagram
 
 ### 1. Cloudflare Worker Setup (Free Tier)
 
-Deploy the Cloudflare Worker using either the Cloudflare Dashboard or Wrangler CLI.
+Deploy the Cloudflare Worker using either GitHub Git Integration (Cloudflare Workers Builds) or the Wrangler CLI.
 
-#### Option A: Deploy via Cloudflare Git Integration (Recommended for Auto-Deploys)
-1. In Cloudflare Dashboard, connect your GitHub repository under **Workers & Pages**.
-2. Create your KV namespace under **Storage & Databases -> KV** (named `WOL_STORE`).
-3. Add your KV namespace ID as an environment variable in **Workers & Pages -> your worker -> Settings -> Variables and Secrets**:
-   - Variable Name: **`WOL_KV_ID`**
-   - Value: `<your_kv_namespace_id>`
-   *(The build script automatically injects this ID during Cloudflare Builds so your personal ID stays private and out of public git, while preventing Wrangler from wiping the binding!)*
-4. Set your secret device and user access token under **Variables and Secrets** (or run `npx wrangler secret put API_KEY`).
-
-#### Option B: Deploy via Wrangler CLI
-1. Log in to Cloudflare:
+#### 🍴 If you are Forking this Repository:
+1. **Fork** this repository to your own GitHub account and clone it locally.
+2. Log in to Cloudflare and create your own KV namespace:
    ```bash
    npx wrangler login
-   ```
-2. Create the KV namespace:
-   ```bash
    npx wrangler kv namespace create WOL_STORE
    ```
-3. Set your secret access token:
+3. Copy the returned `id` (e.g. `1a2b3c4d...`) and paste it into [`wrangler.toml`](wrangler.toml) (and [`cloudflare-worker/wrangler.toml`](cloudflare-worker/wrangler.toml)):
+   ```toml
+   [[kv_namespaces]]
+   binding = "WOL_STORE"
+   id = "YOUR_NEW_KV_NAMESPACE_ID"
+   ```
+4. Commit and push the updated `wrangler.toml` to your fork.
+
+---
+
+#### 🚀 Deployment Options:
+
+##### Option A: Deploy via Cloudflare Git Integration (Continuous Deployment)
+1. In Cloudflare Dashboard, go to **Workers & Pages** $\rightarrow$ **Create Application** $\rightarrow$ **Connect to Git**.
+2. Select your forked repository.
+3. In **Settings $\rightarrow$ Variables and Secrets**, set your secret access token `API_KEY` (or configure via CLI below).
+4. Every push to `main` will automatically build and deploy your Worker with your `WOL_STORE` binding preserved!
+
+##### Option B: Deploy via Wrangler CLI
+1. Set your secret device/user access token:
    ```bash
    npx wrangler secret put API_KEY
    ```
-4. Deploy with your KV ID:
+2. Deploy directly:
    ```bash
-   WOL_KV_ID="<your_kv_namespace_id>" npm run deploy
+   npm run deploy
    ```
 
 ---
