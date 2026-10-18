@@ -113,7 +113,10 @@ inline void handleSetupPage() {
   html += F("'></div>"
             "</div>"
             "<div class='mt' style='margin-top:14px'><button type='submit' class='btn btn-w100'>Verify & Save Configuration</button></div>"
-            "</form></div></div></body></html>");
+            "</form></div>"
+            "<div style='text-align:center;font-size:10px;color:#6e7681;font-family:monospace;margin-top:10px'>"
+            "ServerStarter Firmware: <b style='color:#8b949e'>" FIRMWARE_VERSION "</b>"
+            "</div></div></body></html>");
 
   server.send(200, "text/html", html);
 }
@@ -377,9 +380,13 @@ inline void handleRoot() {
             "</div>"
             "<div class='mt'><button type='submit' class='btn btn-sec btn-w100'>Save Configuration Changes</button></div>"
             "</form></div>"
-            "<div style='text-align:center;margin:12px 0;font-size:11px;color:#8b949e'>"
+            "<div style='text-align:center;margin:12px 0 4px;font-size:11px;color:#8b949e'>"
             "<a href='/'>Refresh</a> • <a href='/status' target='_blank'>JSON API</a> • <a href='/setup'>Full Setup Portal</a>"
-            "</div></div></body></html>");
+            "</div>"
+            "<div style='text-align:center;font-size:10px;color:#6e7681;font-family:monospace;margin-bottom:8px'>"
+            "Firmware: <b style='color:#8b949e'>" FIRMWARE_VERSION "</b> &nbsp;|&nbsp; Cloudflare Worker: <b style='color:#8b949e'>");
+  html += cfWorkerVersion;
+  html += F("</b></div></div></body></html>");
 
   server.send(200, "text/html", html);
 }
@@ -535,7 +542,10 @@ inline void handleStatusJson() {
     json += "\"status\":" + String(e->status) + ",";
     json += "\"latency_ms\":" + String(e->latencyMs) + "}";
   }
-  json += "]}";
+  json += "],";
+  json += "\"firmware_version\":\"" + String(FIRMWARE_VERSION) + "\",";
+  json += "\"worker_version\":\"" + String(cfWorkerVersion) + "\"";
+  json += "}";
 
   server.send(200, "application/json", json);
 }

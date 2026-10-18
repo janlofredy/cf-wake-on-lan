@@ -12,6 +12,9 @@
 // Choose which mode to run:
 #define RUN_MODE            MODE_NORMAL
 
+// Firmware Version
+#define FIRMWARE_VERSION    "v2.0.0"
+
 // ==========================================
 // Network Defaults (Used if EEPROM unconfigured)
 // ==========================================

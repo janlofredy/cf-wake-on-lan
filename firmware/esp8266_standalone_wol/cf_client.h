@@ -93,9 +93,9 @@ inline void updateServerStatusOnCloudflare(ServerState state) {
     http.addHeader("Content-Type", "application/json");
 
     String statusStr = (state == STATE_ONLINE) ? "online" : "offline";
-    String payload   = "{\"status\":\"" + statusStr + "\"}";
+    String payload   = "{\"status\":\"" + statusStr + "\",\"firmware_version\":\"" + String(FIRMWARE_VERSION) + "\"}";
 
-    Serial.printf("[CF] Syncing state '%s' to %s...\n", statusStr.c_str(), url.c_str());
+    Serial.printf("[CF] Syncing state '%s' (FW: %s) to %s...\n", statusStr.c_str(), FIRMWARE_VERSION, url.c_str());
     int httpCode = http.POST(payload);
     lastCfLatencyMs = (uint16_t)(millis() - startT);
     lastCfHttpCode = httpCode;
@@ -111,12 +111,21 @@ inline void updateServerStatusOnCloudflare(ServerState state) {
     }
 
     if (httpCode == 200) {
+      String resp = http.getString();
+      int vIdx = resp.indexOf("\"worker_version\":\"");
+      if (vIdx != -1) {
+        int start = vIdx + 18;
+        int end = resp.indexOf("\"", start);
+        if (end != -1 && (end - start) < (int)sizeof(cfWorkerVersion)) {
+          resp.substring(start, end).toCharArray(cfWorkerVersion, sizeof(cfWorkerVersion));
+        }
+      }
       successCfSyncs++;
       strncpy(lastSuccessCfSyncStr, timeBuf, sizeof(lastSuccessCfSyncStr) - 1);
       lastSuccessCfSyncStr[sizeof(lastSuccessCfSyncStr) - 1] = '\0';
       lastSentServerState = state;
       lastCfKeepaliveTime = millis();
-      Serial.printf("[CF] /server/ping success (%ums)\n", lastCfLatencyMs);
+      Serial.printf("[CF] /server/ping success (%ums, Worker: %s)\n", lastCfLatencyMs, cfWorkerVersion);
     } else {
       failedCfSyncs++;
       strncpy(lastFailCfSyncStr, timeBuf, sizeof(lastFailCfSyncStr) - 1);
@@ -164,6 +173,14 @@ inline void checkWOLTrigger() {
       lastSuccessCfSyncStr[sizeof(lastSuccessCfSyncStr) - 1] = '\0';
 
       String payload = http.getString();
+      int vIdx = payload.indexOf("\"worker_version\":\"");
+      if (vIdx != -1) {
+        int start = vIdx + 18;
+        int end = payload.indexOf("\"", start);
+        if (end != -1 && (end - start) < (int)sizeof(cfWorkerVersion)) {
+          payload.substring(start, end).toCharArray(cfWorkerVersion, sizeof(cfWorkerVersion));
+        }
+      }
       if (payload.indexOf("\"trigger\":true") != -1) {
         Serial.println(F("[TRIGGER] Wake-on-LAN trigger detected from Cloudflare!"));
         sendWOLPacket(activeMac);

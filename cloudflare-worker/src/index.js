@@ -6,6 +6,7 @@
  */
 
 const API_KEY = "CHANGE_ME_SECRET_TOKEN";
+const WORKER_VERSION = "v2.0.0";
 
 function renderDashboardHTML(hasCfAccess = false) {
   return `<!DOCTYPE html>
@@ -334,6 +335,23 @@ function renderDashboardHTML(hasCfAccess = false) {
       margin-top: 1.25rem;
     }
 
+    .version-fineprint {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-top: 0.85rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--card-border);
+    }
+    .version-fineprint .ver-val {
+      color: var(--text);
+      font-weight: 600;
+    }
+
     .view-section {
       display: none;
     }
@@ -381,6 +399,9 @@ function renderDashboardHTML(hasCfAccess = false) {
 
         <div class="security-footer">
           <span>🔒 Protected with Token & Role Authentication</span>
+        </div>
+        <div class="version-fineprint">
+          <span>Worker: <span class="ver-val">${WORKER_VERSION}</span></span>
         </div>
       </div>
 
@@ -438,6 +459,12 @@ function renderDashboardHTML(hasCfAccess = false) {
         <div class="security-footer">
           <span id="securityBadgeText">🔒 Authenticated Session Active</span>
         </div>
+
+        <div class="version-fineprint">
+          <span>Worker: <span class="ver-val">${WORKER_VERSION}</span></span>
+          <span>•</span>
+          <span>Firmware: <span id="firmwareVersion" class="ver-val">Checking...</span></span>
+        </div>
       </div>
 
     </div>
@@ -461,6 +488,7 @@ function renderDashboardHTML(hasCfAccess = false) {
     const triggerBtn = document.getElementById('triggerBtn');
     const autoOnToggle = document.getElementById('autoOnToggle');
     const securityBadgeText = document.getElementById('securityBadgeText');
+    const firmwareVersion = document.getElementById('firmwareVersion');
 
     let pollInterval = null;
 
@@ -652,6 +680,20 @@ function renderDashboardHTML(hasCfAccess = false) {
           lastSeen.textContent = 'Never';
         }
 
+        // Display connected Firmware Version
+        if (firmwareVersion) {
+          if (data.firmware_version) {
+            firmwareVersion.textContent = data.firmware_version;
+            firmwareVersion.style.color = "var(--text)";
+          } else if (data.aod_alive) {
+            firmwareVersion.textContent = "v1.0 (legacy)";
+            firmwareVersion.style.color = "var(--text-muted)";
+          } else {
+            firmwareVersion.textContent = "Offline";
+            firmwareVersion.style.color = "var(--danger)";
+          }
+        }
+
       } catch (err) {
         console.error('fetchStatus error:', err);
       }
@@ -737,7 +779,8 @@ async function getAppState(env) {
       server_status: (serverStatus || "UNKNOWN").toUpperCase(),
       server_last_seen: lastSeen || null,
       last_wol_sent: lastWolSent || null,
-      aod_last_ping_epoch: Number(lastPingEpoch) || 0
+      aod_last_ping_epoch: Number(lastPingEpoch) || 0,
+      firmware_version: null
     };
   } catch (err) {
     console.error("Error reading legacy keys from KV:", err);
@@ -748,7 +791,8 @@ async function getAppState(env) {
       server_status: "UNKNOWN",
       server_last_seen: null,
       last_wol_sent: null,
-      aod_last_ping_epoch: 0
+      aod_last_ping_epoch: 0,
+      firmware_version: null
     };
   }
 }
@@ -887,13 +931,16 @@ export default {
           server_last_seen: state.server_last_seen || null,
           last_wol_sent: state.last_wol_sent || null,
           aod_alive: aodAlive,
-          caller_role: isUser ? "USER" : "AOD_DEVICE"
+          caller_role: isUser ? "USER" : "AOD_DEVICE",
+          firmware_version: state.firmware_version || null,
+          worker_version: WORKER_VERSION
         }),
         {
           status: 200,
           headers: {
             "Content-Type": "application/json",
-            "Cache-Control": "no-store, no-cache, must-revalidate"
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "X-Worker-Version": WORKER_VERSION
           }
         }
       );
@@ -972,18 +1019,23 @@ export default {
       try { body = await request.json(); } catch(e) {}
 
       const incomingStatus = (body.status || "ONLINE").toUpperCase();
+      const incomingFwVersion = body.firmware_version || null;
       const now = Date.now();
       const state = await getAppState(env);
 
-      // KV optimization: only write to KV if state changed OR periodic keepalive elapsed (15 min)
+      // KV optimization: only write to KV if state changed, firmware version changed, OR periodic keepalive elapsed (15 min)
       const currentStatus = (state.server_status || "").toUpperCase();
       const statusChanged = currentStatus !== incomingStatus;
+      const fwVersionChanged = Boolean(incomingFwVersion && state.firmware_version !== incomingFwVersion);
       const keepaliveDue = (now - Number(state.aod_last_ping_epoch || 0)) >= (15 * 60 * 1000);
 
-      if (statusChanged || keepaliveDue) {
+      if (statusChanged || fwVersionChanged || keepaliveDue) {
         state.server_status = incomingStatus;
         if (incomingStatus === "ONLINE") {
           state.server_last_seen = new Date(now).toISOString();
+        }
+        if (incomingFwVersion) {
+          state.firmware_version = incomingFwVersion;
         }
         state.aod_last_ping_epoch = now;
         await saveAppState(env, state);
@@ -993,9 +1045,16 @@ export default {
         JSON.stringify({ 
           success: true, 
           server_status: incomingStatus,
-          kv_write_occurred: statusChanged || keepaliveDue
+          kv_write_occurred: statusChanged || fwVersionChanged || keepaliveDue,
+          worker_version: WORKER_VERSION
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        { 
+          status: 200, 
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Worker-Version": WORKER_VERSION
+          } 
+        }
       );
     }
 

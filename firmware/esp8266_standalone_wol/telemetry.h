@@ -69,6 +69,8 @@ uint16_t lastCfLatencyMs = 0;
 uint32_t totalWolDispatches = 0;
 char lastWolDispatchStr[20] = "Never";
 
+char cfWorkerVersion[16] = "Pending Sync";
+
 // Initialize system telemetry at boot
 inline void initTelemetry() {
   String reason = ESP.getResetReason();
