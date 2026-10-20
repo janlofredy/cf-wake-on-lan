@@ -11,8 +11,8 @@
 DNSServer dnsServer;
 bool isApModeActive = false;
 const byte DNS_PORT = 53;
-const IPAddress AP_IP(192, 168, 4, 1);
-const IPAddress AP_NETMASK(255, 255, 255, 0);
+IPAddress AP_IP(192, 168, 4, 1);
+IPAddress AP_NETMASK(255, 255, 255, 0);
 
 // Launch Setup Access Point and Captive Portal DNS
 inline void startSetupAP() {
@@ -27,7 +27,7 @@ inline void startSetupAP() {
   dnsServer.start(DNS_PORT, "*", AP_IP);
   isApModeActive = true;
 
-  Serial.printf("[AP] SSID: '%s' | Gateway: http://%s\n", SETUP_AP_SSID, AP_IP.toString().c_str());
+  Serial.printf("[AP] SSID: '%s' | Gateway: http://192.168.4.1\n", SETUP_AP_SSID);
   Serial.println(F("[AP] Connect your device to configure Wi-Fi and Cloudflare credentials."));
 }
 
