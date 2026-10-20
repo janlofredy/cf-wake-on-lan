@@ -148,6 +148,8 @@ Deploy the Cloudflare Worker using either GitHub Git Integration (Cloudflare Wor
 
 Flashing directly to the ESP-12E module bypasses the Arduino MCU, running the standalone firmware with full speed and zero SoftwareSerial bottlenecks.
 
+> 📖 **Comprehensive Offline Hardware Guide**: For full board identification ("MOER" vs "MORE" clone transistor defect analysis), complete pinouts, DIP switch truth tables, and offline backups of original guide contents, see [**`ESP8266_WIFI_SHIELD_GUIDE.md`**](ESP8266_WIFI_SHIELD_GUIDE.md).
+
 #### Step 1: Silence Arduino Uno MCU (USB-to-UART Bridge Mode)
 - Connect a DuPont jumper between the Arduino Uno **`RESET`** pin and **`GND`**.
 *(This halts the ATmega328P so the Uno onboard USB-UART chip speaks directly to the ESP8266).*
@@ -202,11 +204,13 @@ Once flashing finishes:
 
 ---
 
-## 🖥️ Local Web UI & JSON API
+## 🖥️ Local Web UI & Hostname Access
 
-Access the local dashboard on your network at:
-- **`http://serverstarter.local`** (via mDNS)
-- Or **`http://<ESP_DEVICE_IP>`**
+Access the local dashboard without typing an IP address when connected to the same Wi-Fi network:
+- **Apple devices (Mac, iPhone, iPad) & Linux**: **`http://serverstarter.local`** (via mDNS)
+- **Windows PCs**: **`http://serverstarter`** (via NetBIOS) or **`http://serverstarter.local`**
+- **Android / Smart TVs / Router Local DNS**: **`http://serverstarter.lan`** (or **`http://serverstarter.home`**)
+- **Direct LAN IP fallback**: **`http://<ESP_DEVICE_IP>`** (visible in your router client list or on the Cloudflare dashboard under *Starter Device*)
 
 ### Endpoints:
 - `GET /`: Ultra-minimal dark theme dashboard displaying active target PC, PC Profiles table, full telemetry, Cloudflare stats, rolling 10-request activity log, and quick configuration form.

@@ -88,6 +88,11 @@ inline bool connectWiFi() {
 // Verify new Wi-Fi credentials in the background while keeping the Setup AP alive
 inline bool testWifiConnection(const char* ssid, const char* pass, unsigned long timeoutMs = 15000) {
   Serial.printf("[WiFi] Background verification for SSID: '%s'...\n", ssid);
+#ifdef DEVICE_HOSTNAME
+  WiFi.hostname(DEVICE_HOSTNAME);
+#else
+  WiFi.hostname("serverstarter");
+#endif
   WiFi.begin(ssid, pass);
 
   unsigned long startT = millis();

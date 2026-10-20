@@ -98,6 +98,7 @@ inline void updateServerStatusOnCloudflare(ServerState state) {
                      + ",\"target_name\":\"" + String(activeServerName) + "\""
                      + ",\"target_mac\":\"" + String(activeMacStr) + "\""
                      + ",\"target_ip\":\"" + String(activeServerIp) + "\""
+                     + ",\"device_ip\":\"" + WiFi.localIP().toString() + "\""
                      + "}";
 
     Serial.printf("[CF] Syncing state '%s' for '%s' (%s) to %s...\n",

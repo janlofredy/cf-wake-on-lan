@@ -6,7 +6,7 @@
  */
 
 const API_KEY = "CHANGE_ME_SECRET_TOKEN";
-const WORKER_VERSION = "v2.0.0";
+const WORKER_VERSION = "v2.0.1";
 
 function renderDashboardHTML(hasCfAccess = false) {
   return `<!DOCTYPE html>
@@ -689,6 +689,9 @@ function renderDashboardHTML(hasCfAccess = false) {
         if (data.aod_alive) {
           aodStatus.textContent = "CONNECTED";
           aodStatus.style.color = "var(--success)";
+          if (data.aod_device_ip) {
+            aodStatus.innerHTML = 'CONNECTED<div style="font-size:0.7rem;font-weight:normal;color:#94a3b8;margin-top:2px"><a href="http://' + data.aod_device_ip + '" target="_blank" style="color:#58a6ff">' + data.aod_device_ip + '</a> &bull; <a href="http://serverstarter.local" target="_blank" style="color:#58a6ff">.local</a></div>';
+          }
         } else {
           aodStatus.textContent = "OFFLINE";
           aodStatus.style.color = "var(--danger)";
@@ -961,6 +964,7 @@ export default {
           server_last_seen: state.server_last_seen || null,
           last_wol_sent: state.last_wol_sent || null,
           aod_alive: aodAlive,
+          aod_device_ip: state.aod_device_ip || null,
           caller_role: isUser ? "USER" : "AOD_DEVICE",
           firmware_version: state.firmware_version || null,
           worker_version: WORKER_VERSION
@@ -1053,10 +1057,11 @@ export default {
       const incomingTargetName = body.target_name || null;
       const incomingTargetMac = body.target_mac || null;
       const incomingTargetIp = body.target_ip || null;
+      const incomingDeviceIp = body.device_ip || null;
       const now = Date.now();
       const state = await getAppState(env);
 
-      // KV optimization: only write to KV if state changed, firmware version changed, target changed, OR periodic keepalive elapsed (15 min)
+      // KV optimization: only write to KV if state changed, firmware version changed, target changed, device IP changed, OR periodic keepalive elapsed (15 min)
       const currentStatus = (state.server_status || "").toUpperCase();
       const statusChanged = currentStatus !== incomingStatus;
       const fwVersionChanged = Boolean(incomingFwVersion && state.firmware_version !== incomingFwVersion);
@@ -1065,9 +1070,10 @@ export default {
         (incomingTargetMac && state.target_mac !== incomingTargetMac) ||
         (incomingTargetIp && state.target_ip !== incomingTargetIp)
       );
+      const deviceIpChanged = Boolean(incomingDeviceIp && state.aod_device_ip !== incomingDeviceIp);
       const keepaliveDue = (now - Number(state.aod_last_ping_epoch || 0)) >= (15 * 60 * 1000);
 
-      if (statusChanged || fwVersionChanged || targetChanged || keepaliveDue) {
+      if (statusChanged || fwVersionChanged || targetChanged || deviceIpChanged || keepaliveDue) {
         state.server_status = incomingStatus;
         if (incomingStatus === "ONLINE") {
           state.server_last_seen = new Date(now).toISOString();
@@ -1078,6 +1084,7 @@ export default {
         if (incomingTargetName) state.target_name = incomingTargetName;
         if (incomingTargetMac) state.target_mac = incomingTargetMac;
         if (incomingTargetIp) state.target_ip = incomingTargetIp;
+        if (incomingDeviceIp) state.aod_device_ip = incomingDeviceIp;
         state.aod_last_ping_epoch = now;
         await saveAppState(env, state);
       }

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
+#include <ESP8266NetBIOS.h>
 #include "config.h"
 #include "storage.h"
 #include "telemetry.h"
@@ -12,6 +13,34 @@
 #include "network_portal.h"
 
 ESP8266WebServer server(80);
+
+// Manage Local Hostname Resolution (mDNS for Apple/Linux/Win10, NetBIOS for Windows)
+inline void startNameServices() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return;
+  }
+
+  // 1. Ensure Station DHCP Option 12 hostname is registered with router
+  WiFi.hostname(DEVICE_HOSTNAME);
+
+  // 2. Multicast DNS (mDNS) responder (http://<DEVICE_HOSTNAME>.local)
+  MDNS.close();
+  if (MDNS.begin(DEVICE_HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addServiceTxt("http", "tcp", "path", "/");
+    Serial.printf("[mDNS] Responder active at: http://%s.local\n", DEVICE_HOSTNAME);
+  } else {
+    Serial.println(F("[mDNS] Failed to start responder"));
+  }
+
+  // 3. NetBIOS (NBNS) responder (http://<DEVICE_HOSTNAME> on Windows)
+  NBNS.end();
+  if (NBNS.begin(DEVICE_HOSTNAME)) {
+    Serial.printf("[NetBIOS] Responder active at: http://%s\n", DEVICE_HOSTNAME);
+  } else {
+    Serial.println(F("[NetBIOS] Failed to start responder"));
+  }
+}
 
 // CSS styling for ultra-minimal, high-contrast, low-RAM plain table interface
 static const char CSS_COMMON[] PROGMEM =
@@ -179,7 +208,7 @@ inline void handleSaveSetup() {
 
   // Send success response
   String succHtml;
-  succHtml.reserve(1400);
+  succHtml.reserve(1500);
   succHtml += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
                 "<title>Setup Complete</title><style>");
   succHtml += (__FlashStringHelper*)CSS_COMMON;
@@ -191,9 +220,8 @@ inline void handleSaveSetup() {
                 "<tr><td class='lbl'>Device IP:</td><td class='val'>");
   succHtml += WiFi.localIP().toString();
   succHtml += F("</td></tr>"
-                "<tr><td class='lbl'>Hostname:</td><td class='val'>http://");
-  succHtml += WiFi.hostname();
-  succHtml += F(".local</td></tr>"
+                "<tr><td class='lbl'>Apple / Linux URL:</td><td class='val'><a href='http://" DEVICE_HOSTNAME ".local'>http://" DEVICE_HOSTNAME ".local</a></td></tr>"
+                "<tr><td class='lbl'>Windows URL:</td><td class='val'><a href='http://" DEVICE_HOSTNAME "'>http://" DEVICE_HOSTNAME "</a></td></tr>"
                 "<tr><td class='lbl'>Target MAC:</td><td class='val'>");
   succHtml += activeMacStr;
   succHtml += F("</td></tr>"
@@ -202,15 +230,21 @@ inline void handleSaveSetup() {
   succHtml += F("</td></tr>"
                 "</table>"
                 "<p class='mt' style='color:#8b949e'>The Setup AP is now shutting down. You can access the dashboard on your local network:</p>"
+                "<p class='mt'><a href='http://" DEVICE_HOSTNAME ".local/' class='btn btn-w100'>Open Local Dashboard (http://" DEVICE_HOSTNAME ".local)</a></p>"
                 "<p class='mt'><a href='http://");
   succHtml += WiFi.localIP().toString();
-  succHtml += F("/' class='btn btn-w100'>Open Local Dashboard</a></p>"
+  succHtml += F("/' class='btn btn-sec btn-w100'>Open via Direct IP (http://");
+  succHtml += WiFi.localIP().toString();
+  succHtml += F(")</a></p>"
                 "</div></div></body></html>");
   server.send(200, "text/html", succHtml);
 
   // Allow HTTP response to flush before stopping AP
   delay(500);
   stopSetupAP();
+
+  // Initialize Name Services (mDNS & NetBIOS) on newly connected Wi-Fi
+  startNameServices();
 
   // Initialize NTP with saved timezone
   initTimeService(activeTzOffsetHours);
@@ -316,11 +350,14 @@ inline void handleRoot() {
   html += String(getWifiQuality());
   html += F("%)</td></tr><tr><td class='lbl'>Wi-Fi Reconnects:</td><td class='val'>");
   html += String(wifiReconnectCount);
-  html += F("</td></tr><tr><td class='lbl'>Device IP / Hostname:</td><td class='val'>");
+  html += F("</td></tr><tr><td class='lbl'>Device IP:</td><td class='val'>");
   html += WiFi.localIP().toString();
-  html += F(" (");
-  html += WiFi.hostname();
-  html += F(".local)</td></tr></table></div>");
+  html += F("</td></tr><tr><td class='lbl'>Local Hostname:</td><td class='val'>" DEVICE_HOSTNAME ".local</td></tr>"
+            "<tr><td class='lbl'>LAN Access URLs:</td><td class='val' style='font-size:11px'>"
+            "&bull; Apple / Linux: <a href='http://" DEVICE_HOSTNAME ".local'>http://" DEVICE_HOSTNAME ".local</a><br>"
+            "&bull; Windows: <a href='http://" DEVICE_HOSTNAME "'>http://" DEVICE_HOSTNAME "</a> or <a href='http://" DEVICE_HOSTNAME ".local'>.local</a><br>"
+            "&bull; Router DNS: <a href='http://" DEVICE_HOSTNAME ".lan'>http://" DEVICE_HOSTNAME ".lan</a>"
+            "</td></tr></table></div>");
 
   // LAN Server Probe Telemetry
   html += F("<div class='box'><h2><span>🎯 LAN Server Probe</span></h2><table>"
@@ -582,6 +619,8 @@ inline void handleStatusJson() {
   json += "\"wifi\":{";
   json += "\"ssid\":\"" + String(activeWifiSsid) + "\",";
   json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+  json += "\"hostname\":\"" DEVICE_HOSTNAME "\",";
+  json += "\"mdns\":\"" DEVICE_HOSTNAME ".local\",";
   json += "\"gateway\":\"" + WiFi.gatewayIP().toString() + "\",";
   json += "\"subnet\":\"" + WiFi.subnetMask().toString() + "\",";
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
@@ -702,10 +741,8 @@ inline void initWebServer() {
   server.begin();
   Serial.println(F("[Web] HTTP server listening on port 80"));
 
-  // mDNS Responder
-  const char* hName = WiFi.hostname().c_str();
-  if (MDNS.begin(hName)) {
-    MDNS.addService("http", "tcp", 80);
-    Serial.printf("[mDNS] Responder active at: http://%s.local\n", hName);
+  // Start mDNS and NetBIOS responders if Wi-Fi station is connected
+  if (WiFi.status() == WL_CONNECTED) {
+    startNameServices();
   }
 }

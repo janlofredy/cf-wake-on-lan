@@ -50,11 +50,12 @@ void setup() {
     startSetupAP();
   }
 
-  // 4. Initialize HTTP web server and mDNS responder
+  // 4. Initialize HTTP web server and name services (mDNS & NetBIOS)
   initWebServer();
 
-  // 5. If Wi-Fi connected, start NTP time service and initial sync
+  // 5. If Wi-Fi connected, start name services, NTP time service and initial sync
   if (wifiOk) {
+    startNameServices();
     initTimeService(activeTzOffsetHours);
 
     // Initial server probe & Cloudflare sync
@@ -76,12 +77,24 @@ void loop() {
   server.handleClient();
   MDNS.update();
 
+  // Track Wi-Fi station connectivity transitions to re-announce name services on reconnect
+  static bool wasConnected = false;
+  bool isConnected = (WiFi.status() == WL_CONNECTED);
+  if (isConnected && !wasConnected) {
+    wasConnected = true;
+    startNameServices();
+  } else if (!isConnected && wasConnected) {
+    wasConnected = false;
+    wifiReconnectCount++;
+    Serial.println(F("[WiFi] Station connection dropped."));
+  }
+
   // Update NTP status and track minimum free heap
   updateTimeService();
   updateMinFreeHeap();
 
   // If running in Setup AP mode without station connection, skip polling loops
-  if (WiFi.status() != WL_CONNECTED) {
+  if (!isConnected) {
     delay(10);
     return;
   }
