@@ -4,6 +4,10 @@
 #include <ESP8266WiFi.h>
 #include "time_service.h"
 
+// Authoritative baked-in firmware release version
+#undef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "v2.0.2"
+
 // ==========================================
 // Rolling 10-Request Activity Log
 // ==========================================

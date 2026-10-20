@@ -6,7 +6,7 @@
  */
 
 const API_KEY = "CHANGE_ME_SECRET_TOKEN";
-const WORKER_VERSION = "v2.0.1";
+const WORKER_VERSION = "v2.0.2";
 
 function renderDashboardHTML(hasCfAccess = false) {
   return `<!DOCTYPE html>

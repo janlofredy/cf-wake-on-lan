@@ -267,7 +267,7 @@ void handleRoot() {
             "<title>ServerStarter Dashboard</title><style>");
   html += CSS_COMMON;
   html += F("</style></head><body><div class='wrap'>"
-            "<div class='box'><h2><span>⚡ ServerStarter</span>");
+            "<div class='box'><h2><span>⚡ ServerStarter <span style='font-size:11px;color:#8b949e;font-weight:normal'>" FIRMWARE_VERSION "</span></span>");
 
   if (currentServerState == STATE_ONLINE) {
     html += F("<span class='badge bg-on'>SERVER ONLINE</span>");
@@ -323,6 +323,7 @@ void handleRoot() {
 
   // System Telemetry
   html += F("<div class='box'><h2><span>📊 Device Telemetry</span></h2><table>"
+            "<tr><td class='lbl'>Firmware Version:</td><td class='val'><b style='color:#58a6ff'>" FIRMWARE_VERSION "</b></td></tr>"
             "<tr><td class='lbl'>Current Time:</td><td class='val'>");
   html += curTimeBuf;
   html += F("</td></tr><tr><td class='lbl'>Device Boot Time:</td><td class='val'>");
