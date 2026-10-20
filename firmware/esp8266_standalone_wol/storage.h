@@ -8,7 +8,7 @@
 // EEPROM Memory Layout (Total Size: 512 bytes)
 // ==========================================
 #define EEPROM_SIZE                 512
-#define EEPROM_MAGIC_BYTE           0xB5 // Incremented to migrate safely to PC Profiles
+#define EEPROM_MAGIC_BYTE           0xB6 // Incremented to migrate to clean single default profile
 #define EEPROM_MAGIC_ADDR           0    // 1 byte (Magic marker)
 #define EEPROM_PROFILE_COUNT_ADDR   1    // 1 byte (Number of saved PC profiles, 1..5)
 #define EEPROM_ACTIVE_PROFILE_ADDR  2    // 1 byte (Index of currently active PC, 0..4)
@@ -29,7 +29,7 @@
 // PC Profile Structure
 // ==========================================
 struct PcProfile {
-  char name[16];   // e.g. "Proxmox", "Secondary PC"
+  char name[16];   // e.g. "Primary PC", "Desktop"
   byte mac[6];     // 6 bytes binary MAC
   char ip[16];     // e.g. "192.168.1.100"
   uint16_t port;   // e.g. 22
@@ -62,7 +62,7 @@ void macBytesToString(const byte* macBytes, char* outStr) {
           macBytes[3], macBytes[4], macBytes[5]);
 }
 
-// Parse MAC address string (e.g. "00:11:22:33:44:55" or "00-11-22-33-44-55") into 6 bytes without sscanf
+// Parse MAC address string (e.g. "00:11:22:33:44:55" or "AA-BB-CC-DD-EE-FF") into 6 bytes without sscanf
 bool parseMacAddress(const char* macStr, byte* macBytes) {
   byte byteIdx = 0;
   byte val = 0;
@@ -470,10 +470,10 @@ void loadConfigFromEEPROM() {
     writeStringToEEPROM(EEPROM_CF_HOST_ADDR, activeCfHost, sizeof(activeCfHost));
     writeStringToEEPROM(EEPROM_AUTH_TOKEN_ADDR, activeAuthToken, sizeof(activeAuthToken));
 
-    // Default Pre-loaded Profiles:
-    // Profile 0: Proxmox Server (from config.h or 192.168.1.100)
+    // Default Initial Profile:
+    // Profile 0: Primary PC (from config.h: SERVER_MAC, SERVER_IP, SERVER_PORT)
     PcProfile p0;
-    strncpy(p0.name, "Proxmox", sizeof(p0.name) - 1);
+    strncpy(p0.name, "Primary PC", sizeof(p0.name) - 1);
     p0.name[sizeof(p0.name) - 1] = '\0';
     parseMacAddress(SERVER_MAC, p0.mac);
     strncpy(p0.ip, SERVER_IP, sizeof(p0.ip) - 1);
@@ -482,18 +482,7 @@ void loadConfigFromEEPROM() {
     writeProfileToEEPROM(0, p0);
     pcProfiles[0] = p0;
 
-    // Profile 1: Secondary PC (192.168.1.100, 00:11:22:33:44:55)
-    PcProfile p1;
-    strncpy(p1.name, "Secondary PC", sizeof(p1.name) - 1);
-    p1.name[sizeof(p1.name) - 1] = '\0';
-    parseMacAddress("00:11:22:33:44:55", p1.mac);
-    strncpy(p1.ip, "192.168.1.100", sizeof(p1.ip) - 1);
-    p1.ip[sizeof(p1.ip) - 1] = '\0';
-    p1.port = 22;
-    writeProfileToEEPROM(1, p1);
-    pcProfiles[1] = p1;
-
-    pcProfileCount = 2;
+    pcProfileCount = 1;
     activeProfileIdx = 0;
 
     EEPROM.write(EEPROM_PROFILE_COUNT_ADDR, pcProfileCount);
