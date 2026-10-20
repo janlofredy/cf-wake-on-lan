@@ -690,7 +690,7 @@ function renderDashboardHTML(hasCfAccess = false) {
           aodStatus.textContent = "CONNECTED";
           aodStatus.style.color = "var(--success)";
           if (data.aod_device_ip) {
-            aodStatus.innerHTML = 'CONNECTED<div style="font-size:0.7rem;font-weight:normal;color:#94a3b8;margin-top:2px"><a href="http://' + data.aod_device_ip + '" target="_blank" style="color:#58a6ff">' + data.aod_device_ip + '</a> &bull; <a href="http://serverstarter.local" target="_blank" style="color:#58a6ff">.local</a></div>';
+            aodStatus.innerHTML = 'CONNECTED<div style="font-size:0.7rem;font-weight:normal;color:#94a3b8;margin-top:2px"><a href="http://' + data.aod_device_ip + '" target="_blank" style="color:#58a6ff">' + data.aod_device_ip + '</a> &bull; <a href="http://wolstarter.local" target="_blank" style="color:#58a6ff">.local</a></div>';
           }
         } else {
           aodStatus.textContent = "OFFLINE";

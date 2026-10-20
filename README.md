@@ -68,7 +68,7 @@ sequenceDiagram
 6. **Configurable Polling Intervals**:
    - Local LAN probe rate (default: 5s) and Cloudflare sync rate (default: 30s) are fully editable via the Web UI and saved to persistent EEPROM.
 7. **Ultra-Minimal Plain Table Web UI & JSON API**:
-   - Ultra-fast, lightweight plain-table dark theme dashboard at `http://serverstarter.local`.
+   - Ultra-fast, lightweight plain-table dark theme dashboard at `http://wolstarter.local`.
    - Machine-readable JSON telemetry endpoint at `/status` with full profile metadata.
 
 ---
@@ -207,9 +207,9 @@ Once flashing finishes:
 ## 🖥️ Local Web UI & Hostname Access
 
 Access the local dashboard without typing an IP address when connected to the same Wi-Fi network:
-- **Apple devices (Mac, iPhone, iPad) & Linux**: **`http://serverstarter.local`** (via mDNS)
-- **Windows PCs**: **`http://serverstarter`** (via NetBIOS) or **`http://serverstarter.local`**
-- **Android / Smart TVs / Router Local DNS**: **`http://serverstarter.lan`** (or **`http://serverstarter.home`**)
+- **Apple devices (Mac, iPhone, iPad) & Linux**: **`http://wolstarter.local`** (via mDNS)
+- **Windows PCs**: **`http://wolstarter`** (via NetBIOS) or **`http://wolstarter.local`**
+- **Android / Smart TVs / Router Local DNS**: **`http://wolstarter.lan`** (or **`http://wolstarter.home`**)
 - **Direct LAN IP fallback**: **`http://<ESP_DEVICE_IP>`** (visible in your router client list or on the Cloudflare dashboard under *Starter Device*)
 
 ### Endpoints:

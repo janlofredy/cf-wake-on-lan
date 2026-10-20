@@ -20,7 +20,7 @@
 // ==========================================
 #define WIFI_SSID           "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD       "YOUR_WIFI_PASSWORD"
-#define DEVICE_HOSTNAME     "serverstarter"  // Accessible at http://serverstarter.local
+#define DEVICE_HOSTNAME     "wolstarter"     // Accessible at http://wolstarter.local
 #define SETUP_AP_SSID       "ServerStarter-Setup"
 #define WIFI_CONNECT_TIMEOUT_MS 25000UL     // 25 seconds before falling back to Setup AP
 

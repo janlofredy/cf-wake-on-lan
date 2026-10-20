@@ -54,7 +54,7 @@ inline bool connectWiFi() {
 #ifdef DEVICE_HOSTNAME
   WiFi.hostname(DEVICE_HOSTNAME);
 #else
-  WiFi.hostname("serverstarter");
+  WiFi.hostname("wolstarter");
 #endif
 
   Serial.printf("[WiFi] Connecting to SSID: '%s' (Hostname: %s)...\n",
@@ -91,7 +91,7 @@ inline bool testWifiConnection(const char* ssid, const char* pass, unsigned long
 #ifdef DEVICE_HOSTNAME
   WiFi.hostname(DEVICE_HOSTNAME);
 #else
-  WiFi.hostname("serverstarter");
+  WiFi.hostname("wolstarter");
 #endif
   WiFi.begin(ssid, pass);
 
