@@ -29,7 +29,7 @@ unsigned long lastCfSyncTime      = 0;
 unsigned long lastCfKeepaliveTime = 0;
 
 // Probe local target server availability via TCP socket
-inline bool probeServer() {
+bool probeServer() {
   unsigned long startT = millis();
   IPAddress ip;
   bool isIp = ip.fromString(activeServerIp);
@@ -88,7 +88,7 @@ inline bool probeServer() {
 }
 
 // Update server reachability status on Cloudflare Worker (/server/ping)
-inline void updateServerStatusOnCloudflare(ServerState state) {
+void updateServerStatusOnCloudflare(ServerState state) {
   if (strlen(activeCfHost) == 0) return;
 
   WiFiClient client;
@@ -157,7 +157,7 @@ inline void updateServerStatusOnCloudflare(ServerState state) {
 }
 
 // Check Cloudflare Worker for pending WOL trigger (/status) and acknowledge (/ack)
-inline void checkWOLTrigger() {
+void checkWOLTrigger() {
   if (strlen(activeCfHost) == 0) return;
 
   WiFiClient client;

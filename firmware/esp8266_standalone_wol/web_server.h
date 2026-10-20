@@ -17,7 +17,7 @@ ESP8266WebServer server(80);
 static const char STATIC_HOSTNAME[] = "wolstarter";
 
 // Manage Local Hostname Resolution (mDNS for NodeMCU 0.9 / ESP8266 Core v2.3.0)
-inline void startNameServices() {
+void startNameServices() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
   }
@@ -35,7 +35,7 @@ inline void startNameServices() {
 }
 
 // CSS styling for ultra-minimal, high-contrast, low-RAM plain table interface
-static const char CSS_COMMON[] PROGMEM =
+static const char CSS_COMMON[] =
   "body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:12px;font-size:13px}"
   ".wrap{max-width:540px;margin:0 auto}"
   "h2{margin:0 0 8px 0;font-size:16px;color:#58a6ff;display:flex;align-items:center;justify-content:space-between}"
@@ -63,12 +63,12 @@ static const char CSS_COMMON[] PROGMEM =
   ".mt{margin-top:8px}";
 
 // Handler: Setup Portal Page (for first-time setup or fallback AP)
-inline void handleSetupPage() {
+void handleSetupPage() {
   String html;
   html.reserve(3500);
   html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>ServerStarter Setup</title><style>");
-  html += (__FlashStringHelper*)CSS_COMMON;
+  html += CSS_COMMON;
   html += F("</style></head><body><div class='wrap'><div class='box'><h2><span>⚡ ServerStarter Setup</span></h2>"
             "<p style='color:#8b949e;margin:0 0 10px 0'>Configure device Wi-Fi, Cloudflare credentials, target server, and polling intervals.</p>"
             "<form method='POST' action='/save-setup'>"
@@ -143,7 +143,7 @@ inline void handleSetupPage() {
 }
 
 // Handler: Process setup save and verify connection in background
-inline void handleSaveSetup() {
+void handleSaveSetup() {
   String reqSsid = server.arg("ssid");
   String manualSsid = server.arg("manual_ssid");
   if (manualSsid.length() > 0) reqSsid = manualSsid;
@@ -182,7 +182,7 @@ inline void handleSaveSetup() {
     errHtml.reserve(1000);
     errHtml += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
                  "<title>Connection Failed</title><style>");
-    errHtml += (__FlashStringHelper*)CSS_COMMON;
+    errHtml += CSS_COMMON;
     errHtml += F("</style></head><body><div class='wrap'><div class='box'><h2 style='color:#f85149'>❌ Connection Failed</h2>"
                  "<p>Could not connect to Wi-Fi network <b>");
     errHtml += reqSsid;
@@ -203,7 +203,7 @@ inline void handleSaveSetup() {
   succHtml.reserve(1500);
   succHtml += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
                 "<title>Setup Complete</title><style>");
-  succHtml += (__FlashStringHelper*)CSS_COMMON;
+  succHtml += CSS_COMMON;
   succHtml += F("</style></head><body><div class='wrap'><div class='box'><h2 style='color:#3fb950'>✅ Connected & Saved!</h2>"
                 "<p>Successfully connected to <b>");
   succHtml += reqSsid;
@@ -248,7 +248,7 @@ inline void handleSaveSetup() {
 }
 
 // Handler: Root Dashboard (ultra-minimal plain tables)
-inline void handleRoot() {
+void handleRoot() {
   // If AP mode is active and user accesses root, redirect to setup
   if (isApModeActive) {
     handleSetupPage();
@@ -265,7 +265,7 @@ inline void handleRoot() {
   html.reserve(8500);
   html += F("<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>ServerStarter Dashboard</title><style>");
-  html += (__FlashStringHelper*)CSS_COMMON;
+  html += CSS_COMMON;
   html += F("</style></head><body><div class='wrap'>"
             "<div class='box'><h2><span>⚡ ServerStarter</span>");
 
@@ -459,7 +459,7 @@ inline void handleRoot() {
 }
 
 // Handler: Manual WOL trigger from dashboard
-inline void handleManualTrigger() {
+void handleManualTrigger() {
   Serial.println(F("[HTTP] Manual WOL trigger requested via web UI."));
   sendWOLPacket(activeMac);
   delay(200);
@@ -470,7 +470,7 @@ inline void handleManualTrigger() {
 }
 
 // Handler: Switch Active PC Profile
-inline void handleSelectProfile() {
+void handleSelectProfile() {
   if (server.hasArg("idx")) {
     uint8_t idx = server.arg("idx").toInt();
     if (setActiveProfile(idx)) {
@@ -485,7 +485,7 @@ inline void handleSelectProfile() {
 }
 
 // Handler: Add a New PC Profile
-inline void handleAddProfile() {
+void handleAddProfile() {
   if (server.hasArg("name") && server.hasArg("mac") && server.hasArg("ip")) {
     String name = server.arg("name");
     name.trim();
@@ -509,7 +509,7 @@ inline void handleAddProfile() {
 }
 
 // Handler: Delete a PC Profile
-inline void handleDeleteProfile() {
+void handleDeleteProfile() {
   if (server.hasArg("idx")) {
     uint8_t idx = server.arg("idx").toInt();
     if (deleteProfile(idx)) {
@@ -524,7 +524,7 @@ inline void handleDeleteProfile() {
 }
 
 // Handler: Update configuration from root dashboard form
-inline void handleUpdateConfig() {
+void handleUpdateConfig() {
   bool updated = false;
 
   if (server.hasArg("mac")) {
@@ -578,7 +578,7 @@ inline void handleUpdateConfig() {
 }
 
 // Handler: Switch device into Setup AP mode on-demand
-inline void handleResetSetup() {
+void handleResetSetup() {
   Serial.println(F("[HTTP] Reset to Setup AP mode requested."));
   startSetupAP();
   server.sendHeader("Location", "/setup");
@@ -586,7 +586,7 @@ inline void handleResetSetup() {
 }
 
 // Handler: Comprehensive JSON status endpoint (/status)
-inline void handleStatusJson() {
+void handleStatusJson() {
   char curTimeBuf[20];
   getFormattedDateTime(curTimeBuf, sizeof(curTimeBuf));
 
@@ -694,13 +694,13 @@ inline void handleStatusJson() {
 }
 
 // Handler: Captive portal probes from iOS, Android, and Windows
-inline void handleCaptivePortalRedirect() {
+void handleCaptivePortalRedirect() {
   server.sendHeader("Location", "http://192.168.4.1/setup", true);
   server.send(302, "text/plain", "");
 }
 
 // Initialize all web server endpoints and mDNS responder
-inline void initWebServer() {
+void initWebServer() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/setup", HTTP_GET, handleSetupPage);
   server.on("/save-setup", HTTP_POST, handleSaveSetup);

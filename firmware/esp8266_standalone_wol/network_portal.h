@@ -15,7 +15,7 @@ IPAddress AP_IP(192, 168, 4, 1);
 IPAddress AP_NETMASK(255, 255, 255, 0);
 
 // Launch Setup Access Point and Captive Portal DNS
-inline void startSetupAP() {
+void startSetupAP() {
   if (isApModeActive) return;
 
   Serial.println(F("\n[AP] Launching Setup Access Point..."));
@@ -32,7 +32,7 @@ inline void startSetupAP() {
 }
 
 // Shut down Setup Access Point and return to Station-only mode
-inline void stopSetupAP() {
+void stopSetupAP() {
   if (!isApModeActive) return;
 
   Serial.println(F("[AP] Shutting down Setup Access Point..."));
@@ -44,7 +44,7 @@ inline void stopSetupAP() {
 }
 
 // Connect to configured Wi-Fi in Station mode with 25s timeout
-inline bool connectWiFi() {
+bool connectWiFi() {
   if (strlen(activeWifiSsid) == 0) {
     Serial.println(F("[WiFi] No Wi-Fi SSID configured."));
     return false;
@@ -86,7 +86,7 @@ inline bool connectWiFi() {
 }
 
 // Verify new Wi-Fi credentials in the background while keeping the Setup AP alive
-inline bool testWifiConnection(const char* ssid, const char* pass, unsigned long timeoutMs = 15000) {
+bool testWifiConnection(const char* ssid, const char* pass, unsigned long timeoutMs = 15000) {
   Serial.printf("[WiFi] Background verification for SSID: '%s'...\n", ssid);
 #ifdef DEVICE_HOSTNAME
   WiFi.hostname(DEVICE_HOSTNAME);

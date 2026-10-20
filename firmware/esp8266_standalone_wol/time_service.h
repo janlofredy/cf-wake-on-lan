@@ -14,20 +14,20 @@ char bootTimeStr[20] = "Pending NTP Sync";
 static unsigned long lastNtpCheckMillis = 0;
 
 // Initialize SNTP client with active timezone offset
-inline void initTimeService(int8_t tzHours) {
+void initTimeService(int8_t tzHours) {
   Serial.printf("[NTP] Initializing SNTP with servers '%s', '%s' (Offset: UTC%+d)...\n",
                 NTP_SERVER_1, NTP_SERVER_2, tzHours);
   configTime(tzHours * 3600, 0, NTP_SERVER_1, NTP_SERVER_2);
 }
 
 // Update timezone offset at runtime without restarting
-inline void updateTimezone(int8_t tzHours) {
+void updateTimezone(int8_t tzHours) {
   Serial.printf("[NTP] Updating timezone offset to UTC%+d...\n", tzHours);
   configTime(tzHours * 3600, 0, NTP_SERVER_1, NTP_SERVER_2);
 }
 
 // Check if NTP has synchronized and calculate boot timestamp
-inline void updateTimeService() {
+void updateTimeService() {
   unsigned long nowMillis = millis();
   if (nowMillis - lastNtpCheckMillis < 1000) return;
   lastNtpCheckMillis = nowMillis;
@@ -40,12 +40,16 @@ inline void updateTimeService() {
       bootEpoch = now - (nowMillis / 1000);
       struct tm* bootTm = localtime(&bootEpoch);
       if (bootTm) {
-        strftime(bootTimeStr, sizeof(bootTimeStr), "%Y-%m-%d %H:%M:%S", bootTm);
+        snprintf(bootTimeStr, sizeof(bootTimeStr), "%04d-%02d-%02d %02d:%02d:%02d",
+                 bootTm->tm_year + 1900, bootTm->tm_mon + 1, bootTm->tm_mday,
+                 bootTm->tm_hour, bootTm->tm_min, bootTm->tm_sec);
       }
       char curTimeStr[20];
       struct tm* curTm = localtime(&now);
       if (curTm) {
-        strftime(curTimeStr, sizeof(curTimeStr), "%Y-%m-%d %H:%M:%S", curTm);
+        snprintf(curTimeStr, sizeof(curTimeStr), "%04d-%02d-%02d %02d:%02d:%02d",
+                 curTm->tm_year + 1900, curTm->tm_mon + 1, curTm->tm_mday,
+                 curTm->tm_hour, curTm->tm_min, curTm->tm_sec);
       } else {
         strcpy(curTimeStr, "Unknown");
       }
@@ -56,7 +60,7 @@ inline void updateTimeService() {
 }
 
 // Format current local time into "YYYY-MM-DD HH:MM:SS"
-inline void getFormattedDateTime(char* outBuf, size_t maxLen) {
+void getFormattedDateTime(char* outBuf, size_t maxLen) {
   if (!ntpSynchronized) {
     strncpy(outBuf, "Pending NTP Sync", maxLen - 1);
     outBuf[maxLen - 1] = '\0';
@@ -66,7 +70,9 @@ inline void getFormattedDateTime(char* outBuf, size_t maxLen) {
   time_t now = time(nullptr);
   struct tm* tmInfo = localtime(&now);
   if (tmInfo) {
-    strftime(outBuf, maxLen, "%Y-%m-%d %H:%M:%S", tmInfo);
+    snprintf(outBuf, maxLen, "%04d-%02d-%02d %02d:%02d:%02d",
+             tmInfo->tm_year + 1900, tmInfo->tm_mon + 1, tmInfo->tm_mday,
+             tmInfo->tm_hour, tmInfo->tm_min, tmInfo->tm_sec);
   } else {
     strncpy(outBuf, "Sync Error", maxLen - 1);
     outBuf[maxLen - 1] = '\0';
@@ -74,7 +80,7 @@ inline void getFormattedDateTime(char* outBuf, size_t maxLen) {
 }
 
 // Format system uptime into "Xd Xh Xm Xs"
-inline void getFormattedUptime(char* outBuf, size_t maxLen) {
+void getFormattedUptime(char* outBuf, size_t maxLen) {
   unsigned long totalSec = millis() / 1000;
   unsigned long days = totalSec / 86400;
   unsigned long hours = (totalSec % 86400) / 3600;
@@ -91,6 +97,6 @@ inline void getFormattedUptime(char* outBuf, size_t maxLen) {
 }
 
 // Return whether NTP is locked
-inline bool isNtpSynced() {
+bool isNtpSynced() {
   return ntpSynchronized;
 }

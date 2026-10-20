@@ -20,7 +20,7 @@ uint8_t historyHead = 0;
 uint8_t historyCount = 0;
 
 // Add an entry to the in-memory circular log
-inline void addRequestLog(const char* action, int16_t status, uint16_t latencyMs) {
+void addRequestLog(const char* action, int16_t status, uint16_t latencyMs) {
   RequestLogEntry* entry = &requestHistory[historyHead];
 
   if (isNtpSynced()) {
@@ -72,7 +72,7 @@ char lastWolDispatchStr[20] = "Never";
 char cfWorkerVersion[16] = "Pending Sync";
 
 // Initialize system telemetry at boot
-inline void initTelemetry() {
+void initTelemetry() {
   String reason = ESP.getResetReason();
   strncpy(resetReason, reason.c_str(), sizeof(resetReason) - 1);
   resetReason[sizeof(resetReason) - 1] = '\0';
@@ -80,7 +80,7 @@ inline void initTelemetry() {
 }
 
 // Monitor lowest free heap recorded to track memory leaks
-inline void updateMinFreeHeap() {
+void updateMinFreeHeap() {
   uint32_t currentFree = ESP.getFreeHeap();
   if (currentFree < minFreeHeap || minFreeHeap == 0) {
     minFreeHeap = currentFree;
@@ -88,7 +88,7 @@ inline void updateMinFreeHeap() {
 }
 
 // Convert RSSI dBm to estimated signal quality percentage (0-100%)
-inline int getWifiQuality() {
+int getWifiQuality() {
   int32_t rssi = WiFi.RSSI();
   if (rssi <= -100) return 0;
   if (rssi >= -50)  return 100;
@@ -96,13 +96,13 @@ inline int getWifiQuality() {
 }
 
 // Compute Server Probe success percentage
-inline float getProbeSuccessRate() {
+float getProbeSuccessRate() {
   if (totalProbes == 0) return 0.0f;
   return ((float)successProbes / (float)totalProbes) * 100.0f;
 }
 
 // Compute Cloudflare Sync success percentage
-inline float getCfSyncSuccessRate() {
+float getCfSyncSuccessRate() {
   if (totalCfSyncs == 0) return 0.0f;
   return ((float)successCfSyncs / (float)totalCfSyncs) * 100.0f;
 }

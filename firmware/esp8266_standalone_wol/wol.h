@@ -11,7 +11,7 @@
 WiFiUDP udp;
 
 // Visual activity blinker (Active LOW on ESP8266 GPIO2)
-inline void blinkLed(int times, int ms) {
+void blinkLed(int times, int ms) {
   for (int i = 0; i < times; i++) {
     digitalWrite(LED_PIN, LOW); // Active LOW on ESP-12E
     delay(ms);
@@ -21,7 +21,7 @@ inline void blinkLed(int times, int ms) {
 }
 
 // Send Wake-on-LAN UDP magic packet (102 bytes) across multiple broadcast destinations
-inline void sendWOLPacket(const byte* macAddress) {
+void sendWOLPacket(const byte* macAddress) {
   unsigned long startT = millis();
   char targetMacFormatted[18];
   macBytesToString(macAddress, targetMacFormatted);

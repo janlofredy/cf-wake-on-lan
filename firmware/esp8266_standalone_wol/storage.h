@@ -56,14 +56,14 @@ char activeCfHost[65] = "";
 char activeAuthToken[65] = "";
 
 // Convert 6-byte MAC array to formatted string "XX:XX:XX:XX:XX:XX"
-inline void macBytesToString(const byte* macBytes, char* outStr) {
+void macBytesToString(const byte* macBytes, char* outStr) {
   sprintf(outStr, "%02x:%02x:%02x:%02x:%02x:%02x",
           macBytes[0], macBytes[1], macBytes[2],
           macBytes[3], macBytes[4], macBytes[5]);
 }
 
 // Parse MAC address string (e.g. "00:11:22:33:44:55" or "00-11-22-33-44-55") into 6 bytes without sscanf
-inline bool parseMacAddress(const char* macStr, byte* macBytes) {
+bool parseMacAddress(const char* macStr, byte* macBytes) {
   byte byteIdx = 0;
   byte val = 0;
   bool hasNibble = false;
@@ -90,7 +90,7 @@ inline bool parseMacAddress(const char* macStr, byte* macBytes) {
 }
 
 // Helper to read string from EEPROM safely
-inline void readStringFromEEPROM(int startAddr, char* outBuf, int maxLen) {
+void readStringFromEEPROM(int startAddr, char* outBuf, int maxLen) {
   for (int i = 0; i < maxLen - 1; i++) {
     char c = (char)EEPROM.read(startAddr + i);
     if (c == 0xFF || c == '\0') {
@@ -103,7 +103,7 @@ inline void readStringFromEEPROM(int startAddr, char* outBuf, int maxLen) {
 }
 
 // Helper to write string to EEPROM safely (only writes changed bytes to prevent flash wear)
-inline bool writeStringToEEPROM(int startAddr, const char* inStr, int maxLen) {
+bool writeStringToEEPROM(int startAddr, const char* inStr, int maxLen) {
   bool changed = false;
   int i = 0;
   for (; i < maxLen - 1 && inStr[i] != '\0'; i++) {
@@ -120,7 +120,7 @@ inline bool writeStringToEEPROM(int startAddr, const char* inStr, int maxLen) {
 }
 
 // Sync active target shortcuts with currently active PC profile
-inline void syncActiveProfilePointers() {
+void syncActiveProfilePointers() {
   if (pcProfileCount == 0) return;
   if (activeProfileIdx >= pcProfileCount) activeProfileIdx = 0;
 
@@ -135,7 +135,7 @@ inline void syncActiveProfilePointers() {
 }
 
 // Read PC Profile from EEPROM
-inline void readProfileFromEEPROM(uint8_t idx, PcProfile& profile) {
+void readProfileFromEEPROM(uint8_t idx, PcProfile& profile) {
   int base = EEPROM_PROFILES_START_ADDR + (idx * PROFILE_RECORD_SIZE);
   readStringFromEEPROM(base, profile.name, sizeof(profile.name));
   for (int i = 0; i < 6; i++) {
@@ -149,7 +149,7 @@ inline void readProfileFromEEPROM(uint8_t idx, PcProfile& profile) {
 }
 
 // Write PC Profile to EEPROM
-inline bool writeProfileToEEPROM(uint8_t idx, const PcProfile& profile) {
+bool writeProfileToEEPROM(uint8_t idx, const PcProfile& profile) {
   bool changed = false;
   int base = EEPROM_PROFILES_START_ADDR + (idx * PROFILE_RECORD_SIZE);
 
@@ -170,7 +170,7 @@ inline bool writeProfileToEEPROM(uint8_t idx, const PcProfile& profile) {
 }
 
 // Switch the Active PC Profile
-inline bool setActiveProfile(uint8_t idx) {
+bool setActiveProfile(uint8_t idx) {
   if (idx >= pcProfileCount) return false;
   activeProfileIdx = idx;
   EEPROM.write(EEPROM_ACTIVE_PROFILE_ADDR, activeProfileIdx);
@@ -182,7 +182,7 @@ inline bool setActiveProfile(uint8_t idx) {
 }
 
 // Add a new PC Profile (up to 5 profiles max)
-inline bool addProfile(const char* name, const byte* mac, const char* ip, uint16_t port) {
+bool addProfile(const char* name, const byte* mac, const char* ip, uint16_t port) {
   if (pcProfileCount >= MAX_PC_PROFILES) {
     Serial.println(F("[PROFILES] Cannot add: Maximum of 5 PC profiles reached!"));
     return false;
@@ -209,7 +209,7 @@ inline bool addProfile(const char* name, const byte* mac, const char* ip, uint16
 }
 
 // Delete a PC Profile (cannot delete if only 1 profile remaining)
-inline bool deleteProfile(uint8_t idx) {
+bool deleteProfile(uint8_t idx) {
   if (pcProfileCount <= 1 || idx >= pcProfileCount) {
     Serial.println(F("[PROFILES] Cannot delete profile (minimum 1 profile required)."));
     return false;
@@ -240,7 +240,7 @@ inline bool deleteProfile(uint8_t idx) {
 }
 
 // Update Target MAC/IP of the Active PC Profile
-inline bool saveTargetConfigToEEPROM(const byte* mac, const char* ip) {
+bool saveTargetConfigToEEPROM(const byte* mac, const char* ip) {
   if (pcProfileCount == 0) return false;
   PcProfile* active = &pcProfiles[activeProfileIdx];
   memcpy(active->mac, mac, 6);
@@ -257,7 +257,7 @@ inline bool saveTargetConfigToEEPROM(const byte* mac, const char* ip) {
 }
 
 // Save Timezone offset to EEPROM
-inline bool saveTzToEEPROM(int8_t tz) {
+bool saveTzToEEPROM(int8_t tz) {
   if (tz < -12 || tz > 14) tz = DEFAULT_TIMEZONE_OFFSET_HOURS;
   if ((int8_t)EEPROM.read(EEPROM_TZ_ADDR) != tz) {
     EEPROM.write(EEPROM_TZ_ADDR, (byte)tz);
@@ -272,7 +272,7 @@ inline bool saveTzToEEPROM(int8_t tz) {
 }
 
 // Save Polling Rates to EEPROM
-inline bool saveRatesToEEPROM(uint16_t probeSec, uint16_t cfSec) {
+bool saveRatesToEEPROM(uint16_t probeSec, uint16_t cfSec) {
   if (probeSec < 1) probeSec = 1;
   if (cfSec < 5) cfSec = 5;
 
@@ -300,7 +300,7 @@ inline bool saveRatesToEEPROM(uint16_t probeSec, uint16_t cfSec) {
 }
 
 // Save Wi-Fi Credentials to EEPROM
-inline bool saveWifiToEEPROM(const char* ssid, const char* pass) {
+bool saveWifiToEEPROM(const char* ssid, const char* pass) {
   bool changed = false;
   if (writeStringToEEPROM(EEPROM_SSID_ADDR, ssid, sizeof(activeWifiSsid))) changed = true;
   if (writeStringToEEPROM(EEPROM_PASS_ADDR, pass, sizeof(activeWifiPass))) changed = true;
@@ -318,7 +318,7 @@ inline bool saveWifiToEEPROM(const char* ssid, const char* pass) {
 }
 
 // Save Cloudflare configuration to EEPROM
-inline bool saveCfConfigToEEPROM(const char* host, const char* token) {
+bool saveCfConfigToEEPROM(const char* host, const char* token) {
   bool changed = false;
   if (writeStringToEEPROM(EEPROM_CF_HOST_ADDR, host, sizeof(activeCfHost))) changed = true;
   if (writeStringToEEPROM(EEPROM_AUTH_TOKEN_ADDR, token, sizeof(activeAuthToken))) changed = true;
@@ -336,7 +336,7 @@ inline bool saveCfConfigToEEPROM(const char* host, const char* token) {
 }
 
 // Save Full Setup Configuration (from first-time setup portal)
-inline bool saveAllSetupConfig(const char* ssid, const char* pass, const char* host, const char* token,
+bool saveAllSetupConfig(const char* ssid, const char* pass, const char* host, const char* token,
                                const char* macStr, const char* ip, int8_t tz, uint16_t probeSec, uint16_t cfSec,
                                const char* pcName = "Default PC", uint16_t port = 22) {
   byte parsedMac[6];
@@ -376,14 +376,14 @@ inline bool saveAllSetupConfig(const char* ssid, const char* pass, const char* h
 }
 
 // Reset/Clear EEPROM configuration to force setup portal on next boot
-inline void clearEEPROMConfig() {
+void clearEEPROMConfig() {
   EEPROM.write(EEPROM_MAGIC_ADDR, 0x00);
   EEPROM.commit();
   Serial.println(F("[STORAGE] EEPROM magic byte cleared. Device will enter Setup AP mode on restart."));
 }
 
 // Load entire configuration from EEPROM (or populate with fallback defaults from config.h)
-inline void loadConfigFromEEPROM() {
+void loadConfigFromEEPROM() {
   EEPROM.begin(EEPROM_SIZE);
   byte magic = EEPROM.read(EEPROM_MAGIC_ADDR);
 
