@@ -170,7 +170,7 @@ Flashing directly to the ESP-12E module bypasses the Arduino MCU, running the st
    http://arduino.esp8266.com/stable/package_esp8266com_index.json
    ```
 2. Open **Tools > Board > Boards Manager**, search for **`esp8266`**, and install **`esp8266 by ESP8266 Community`**.
-3. Select Board: **`Tools > Board > ESP8266 Boards > Generic ESP8266 Module`**.
+3. Select Board: **`Tools > Board > NodeMCU 0.9 (ESP-12 Module)`** *(or `Generic ESP8266 Module`)*.
 4. Flash Size: **`4MB (FS:2MB OTA:~1019KB)`** (or `512KB` depending on your chip).
 5. Upload Speed: **`115200`**.
 

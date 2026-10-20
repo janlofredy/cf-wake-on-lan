@@ -12,18 +12,14 @@
  * ============================================================================
  * ESP8266 Standalone ServerStarter Firmware
  * ============================================================================
- * Hardware: ESP8266 ESP-12E (Standalone on WiFi Shield or NodeMCU/Wemos)
+ * Hardware: NodeMCU 0.9 (ESP-12 Module) / ESP-12E Standalone
+ * Core:     esp8266 by ESP8266 Community version 2.3.0
  *
- * DIP SWITCHES to FLASH (ESP8266 Shield on Uno):
- *   - Arduino Uno RESET pin connected to GND (silences Uno MCU)
- *   - Shield DIP switches: 1: OFF, 2: OFF, 3: ON, 4: ON
- *   - Jumpers: Shield TX -> Uno D1 (or D0), Shield RX -> Uno D0 (or D1)
- *   - Press ESP-RST button before upload
- *   - In Arduino IDE: Board -> "Generic ESP8266 Module"
- *
- * DIP SWITCHES to RUN:
- *   - Shield DIP switches: 1: ON, 2: ON, 3: OFF, 4: OFF (or keep jumpers/reset)
- *   - Press ESP-RST button to start running
+ * In Arduino IDE:
+ *   - Board: "NodeMCU 0.9 (ESP-12 Module)"
+ *   - CPU Frequency: 80 MHz
+ *   - Flash Size: 4M (3M SPIFFS) or 4M (1M SPIFFS)
+ *   - Upload Speed: 115200 (or 921600)
  * ============================================================================
  */
 

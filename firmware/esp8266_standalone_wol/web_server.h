@@ -3,18 +3,6 @@
 #include <Arduino.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
-
-#if defined(__has_include)
-  #if __has_include(<ESP8266NetBIOS.h>)
-    #include <ESP8266NetBIOS.h>
-    #define HAS_NETBIOS 1
-  #else
-    #define HAS_NETBIOS 0
-  #endif
-#else
-  #define HAS_NETBIOS 0
-#endif
-
 #include "config.h"
 #include "storage.h"
 #include "telemetry.h"
@@ -25,10 +13,10 @@
 
 ESP8266WebServer server(80);
 
-// Direct static local hostname: http://wolstarter.local & http://wolstarter
+// Direct static local hostname: http://wolstarter.local
 static const char STATIC_HOSTNAME[] = "wolstarter";
 
-// Manage Local Hostname Resolution (mDNS for Apple/Linux/Win10, NetBIOS for Windows)
+// Manage Local Hostname Resolution (mDNS for NodeMCU 0.9 / ESP8266 Core v2.3.0)
 inline void startNameServices() {
   if (WiFi.status() != WL_CONNECTED) {
     return;
@@ -38,24 +26,12 @@ inline void startNameServices() {
   WiFi.hostname(STATIC_HOSTNAME);
 
   // 2. Multicast DNS (mDNS) responder (http://wolstarter.local)
-  MDNS.close();
   if (MDNS.begin(STATIC_HOSTNAME)) {
     MDNS.addService("http", "tcp", 80);
-    MDNS.addServiceTxt("http", "tcp", "path", "/");
     Serial.printf("[mDNS] Responder active at: http://%s.local\n", STATIC_HOSTNAME);
   } else {
     Serial.println(F("[mDNS] Failed to start responder"));
   }
-
-#if HAS_NETBIOS
-  // 3. NetBIOS (NBNS) responder (http://wolstarter on Windows)
-  NBNS.end();
-  if (NBNS.begin(STATIC_HOSTNAME)) {
-    Serial.printf("[NetBIOS] Responder active at: http://%s\n", STATIC_HOSTNAME);
-  } else {
-    Serial.println(F("[NetBIOS] Failed to start responder"));
-  }
-#endif
 }
 
 // CSS styling for ultra-minimal, high-contrast, low-RAM plain table interface
@@ -236,8 +212,7 @@ inline void handleSaveSetup() {
                 "<tr><td class='lbl'>Device IP:</td><td class='val'>");
   succHtml += WiFi.localIP().toString();
   succHtml += F("</td></tr>"
-                "<tr><td class='lbl'>Apple / Linux URL:</td><td class='val'><a href='http://wolstarter.local'>http://wolstarter.local</a></td></tr>"
-                "<tr><td class='lbl'>Windows URL:</td><td class='val'><a href='http://wolstarter'>http://wolstarter</a></td></tr>"
+                "<tr><td class='lbl'>Local Hostname:</td><td class='val'><a href='http://wolstarter.local'>http://wolstarter.local</a></td></tr>"
                 "<tr><td class='lbl'>Target MAC:</td><td class='val'>");
   succHtml += activeMacStr;
   succHtml += F("</td></tr>"
@@ -259,7 +234,7 @@ inline void handleSaveSetup() {
   delay(500);
   stopSetupAP();
 
-  // Initialize Name Services (mDNS & NetBIOS) on newly connected Wi-Fi
+  // Initialize Name Services (mDNS) on newly connected Wi-Fi
   startNameServices();
 
   // Initialize NTP with saved timezone
@@ -370,9 +345,8 @@ inline void handleRoot() {
   html += WiFi.localIP().toString();
   html += F("</td></tr><tr><td class='lbl'>Local Hostname:</td><td class='val'>wolstarter.local</td></tr>"
             "<tr><td class='lbl'>LAN Access URLs:</td><td class='val' style='font-size:11px'>"
-            "&bull; Apple / Linux: <a href='http://wolstarter.local'>http://wolstarter.local</a><br>"
-            "&bull; Windows: <a href='http://wolstarter'>http://wolstarter</a> or <a href='http://wolstarter.local'>.local</a><br>"
-            "&bull; Router DNS: <a href='http://wolstarter.lan'>http://wolstarter.lan</a>"
+            "&bull; mDNS (.local): <a href='http://wolstarter.local'>http://wolstarter.local</a><br>"
+            "&bull; Router Local DNS: <a href='http://wolstarter.lan'>http://wolstarter.lan</a> (or <a href='http://wolstarter.home'>.home</a>)"
             "</td></tr></table></div>");
 
   // LAN Server Probe Telemetry
@@ -757,7 +731,7 @@ inline void initWebServer() {
   server.begin();
   Serial.println(F("[Web] HTTP server listening on port 80"));
 
-  // Start mDNS and NetBIOS responders if Wi-Fi station is connected
+  // Start mDNS responder if Wi-Fi station is connected
   if (WiFi.status() == WL_CONNECTED) {
     startNameServices();
   }

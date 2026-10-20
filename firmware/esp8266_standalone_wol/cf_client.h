@@ -3,6 +3,15 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <core_version.h>
+
+// HTTPClient::begin signature compatibility (v2.3.0 vs v2.5+)
+#if defined(ARDUINO_ESP8266_RELEASE_2_3_0) || defined(ARDUINO_ESP8266_RELEASE_2_4_0) || defined(ARDUINO_ESP8266_RELEASE_2_4_1) || defined(ARDUINO_ESP8266_RELEASE_2_4_2)
+  #define CF_HTTP_BEGIN(http_obj, client_obj, url_str) (http_obj).begin(url_str)
+#else
+  #define CF_HTTP_BEGIN(http_obj, client_obj, url_str) (http_obj).begin(client_obj, url_str)
+#endif
+
 #include "config.h"
 #include "storage.h"
 #include "telemetry.h"
@@ -87,7 +96,7 @@ inline void updateServerStatusOnCloudflare(ServerState state) {
   String url = "http://" + String(activeCfHost) + "/server/ping";
 
   unsigned long startT = millis();
-  if (http.begin(client, url)) {
+  if (CF_HTTP_BEGIN(http, client, url)) {
     http.setTimeout(4000);
     http.addHeader("Authorization", String("Bearer ") + activeAuthToken);
     http.addHeader("Content-Type", "application/json");
@@ -156,7 +165,7 @@ inline void checkWOLTrigger() {
   String url = "http://" + String(activeCfHost) + "/status";
 
   unsigned long startT = millis();
-  if (http.begin(client, url)) {
+  if (CF_HTTP_BEGIN(http, client, url)) {
     http.setTimeout(4000);
     http.addHeader("Authorization", String("Bearer ") + activeAuthToken);
 
@@ -199,7 +208,7 @@ inline void checkWOLTrigger() {
         HTTPClient ackHttp;
         String ackUrl = "http://" + String(activeCfHost) + "/ack";
         unsigned long ackStartT = millis();
-        if (ackHttp.begin(ackClient, ackUrl)) {
+        if (CF_HTTP_BEGIN(ackHttp, ackClient, ackUrl)) {
           ackHttp.setTimeout(3000);
           ackHttp.addHeader("Authorization", String("Bearer ") + activeAuthToken);
           ackHttp.addHeader("Content-Type", "application/json");
