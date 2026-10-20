@@ -3,7 +3,18 @@
 #include <Arduino.h>
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
-#include <ESP8266NetBIOS.h>
+
+#if defined(__has_include)
+  #if __has_include(<ESP8266NetBIOS.h>)
+    #include <ESP8266NetBIOS.h>
+    #define HAS_NETBIOS 1
+  #else
+    #define HAS_NETBIOS 0
+  #endif
+#else
+  #define HAS_NETBIOS 0
+#endif
+
 #include "config.h"
 #include "storage.h"
 #include "telemetry.h"
@@ -36,6 +47,7 @@ inline void startNameServices() {
     Serial.println(F("[mDNS] Failed to start responder"));
   }
 
+#if HAS_NETBIOS
   // 3. NetBIOS (NBNS) responder (http://wolstarter on Windows)
   NBNS.end();
   if (NBNS.begin(STATIC_HOSTNAME)) {
@@ -43,6 +55,7 @@ inline void startNameServices() {
   } else {
     Serial.println(F("[NetBIOS] Failed to start responder"));
   }
+#endif
 }
 
 // CSS styling for ultra-minimal, high-contrast, low-RAM plain table interface
