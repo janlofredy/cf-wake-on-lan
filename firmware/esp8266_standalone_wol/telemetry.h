@@ -19,8 +19,10 @@ RequestLogEntry requestHistory[MAX_REQUEST_LOG];
 uint8_t historyHead = 0;
 uint8_t historyCount = 0;
 
-// Add an entry to the in-memory circular log
+// Add an entry to the in-memory circular log (Cloudflare requests only)
 void addRequestLog(const char* action, int16_t status, uint16_t latencyMs) {
+  if (strncmp(action, "CF ", 3) != 0) return;
+
   RequestLogEntry* entry = &requestHistory[historyHead];
 
   if (isNtpSynced()) {

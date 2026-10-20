@@ -399,11 +399,11 @@ void handleRoot() {
   html += lastWolDispatchStr;
   html += F(")</td></tr></table></div>");
 
-  // Rolling 10-Request Activity Log
-  html += F("<div class='box'><h2><span>📜 Recent Requests (Last 10)</span></h2>"
-            "<table><thead><tr><th>Time</th><th>Action</th><th>Status</th><th>Latency</th></tr></thead><tbody>");
+  // Rolling 10-Request Activity Log (Cloudflare Only)
+  html += F("<div class='box'><h2><span>📜 Recent Cloudflare Requests (Last 10)</span></h2>"
+            "<table><thead><tr><th>Time</th><th>Action</th><th>HTTP Status</th><th>Latency</th></tr></thead><tbody>");
   if (historyCount == 0) {
-    html += F("<tr><td colspan='4' style='color:#8b949e;text-align:center'>No activity recorded yet</td></tr>");
+    html += F("<tr><td colspan='4' style='color:#8b949e;text-align:center'>No Cloudflare activity recorded yet</td></tr>");
   } else {
     for (int i = 0; i < historyCount; i++) {
       int idx = (historyHead - 1 - i + MAX_REQUEST_LOG) % MAX_REQUEST_LOG;
@@ -411,10 +411,8 @@ void handleRoot() {
       html += "<tr><td class='val'>" + String(e->timeStr) + "</td>";
       html += "<td class='val'>" + String(e->action) + "</td>";
       html += "<td class='val'>";
-      if (e->status == 200 || e->status == 1) {
-        html += "<span style='color:#3fb950'>" + String(e->status) + "</span>";
-      } else if (e->status == 0) {
-        html += "<span style='color:#f85149'>OFFLINE</span>";
+      if (e->status == 200) {
+        html += "<span style='color:#3fb950'>" + String(e->status) + " OK</span>";
       } else {
         html += "<span style='color:#f85149'>" + String(e->status) + "</span>";
       }

@@ -64,7 +64,7 @@ sequenceDiagram
    - **Cloudflare Integration**: Last Sync HTTP Status, Round-Trip Latency (ms), Sync Success Rate (%), Last Successful/Failed Syncs, and Total WOL Dispatches.
    - **Wi-Fi Diagnostics**: RSSI (dBm & %), Reconnection Counter, IP, Gateway, Subnet, and Hostname.
 5. **Rolling 10-Request Activity Log**:
-   - In-memory circular buffer recording the last 10 actions (`CF /server/ping`, `CF /status`, `CF /ack`, `LAN Probe`, `WOL Packet`) with execution timestamps, status codes, and latency.
+   - In-memory circular buffer recording the last 10 Cloudflare requests (`CF /ping`, `CF /status`, `CF /ack`) with execution timestamps, HTTP status codes, and latency.
 6. **Configurable Polling Intervals**:
    - Local LAN probe rate (default: 5s) and Cloudflare sync rate (default: 30s) are fully editable via the Web UI and saved to persistent EEPROM.
 7. **Ultra-Minimal Plain Table Web UI & JSON API**:

@@ -70,7 +70,6 @@ void sendWOLPacket(const byte* macAddress) {
     getFormattedUptime(upStr, sizeof(upStr));
     snprintf(lastWolDispatchStr, sizeof(lastWolDispatchStr), "Up: %s", upStr);
   }
-  addRequestLog("WOL Packet", 1, (uint16_t)latency);
 
   blinkLed(3, 80);
 }

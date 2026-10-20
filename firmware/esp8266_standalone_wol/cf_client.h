@@ -83,7 +83,6 @@ bool probeServer() {
     Serial.printf("[PROBE] [%s] %s:%u -> OFFLINE (%ums)\n", activeServerName, activeServerIp, activeServerPort, lastProbeLatencyMs);
   }
 
-  addRequestLog("LAN Probe", connected ? 200 : 0, lastProbeLatencyMs);
   return connected;
 }
 
