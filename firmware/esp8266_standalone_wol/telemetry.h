@@ -6,7 +6,7 @@
 
 // Authoritative baked-in firmware release version
 #undef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v2.0.3"
+#define FIRMWARE_VERSION "v2.0.4"
 
 // ==========================================
 // Rolling 10-Request Activity Log

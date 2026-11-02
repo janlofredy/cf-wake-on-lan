@@ -6,7 +6,7 @@
  */
 
 const API_KEY = "CHANGE_ME_SECRET_TOKEN";
-const WORKER_VERSION = "v2.0.3";
+const WORKER_VERSION = "v2.0.4";
 
 function renderDashboardHTML(hasCfAccess = false) {
   return `<!DOCTYPE html>
@@ -162,10 +162,19 @@ function renderDashboardHTML(hasCfAccess = false) {
     }
 
     .stat-value {
-      font-family: var(--font-mono);
-      font-size: 0.85rem;
-      font-weight: 600;
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+      font-weight: 700;
       color: var(--text);
+    }
+
+    .stat-sub {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .switch-card {
@@ -271,6 +280,25 @@ function renderDashboardHTML(hasCfAccess = false) {
     .btn-secondary:hover:not(:disabled) {
       background: rgba(255, 255, 255, 0.08);
       color: var(--text);
+    }
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-align: center;
+      padding: 0.25rem 0;
+      text-decoration: underline;
+      transition: color 0.2s ease;
+    }
+    .btn-link:hover:not(:disabled) {
+      color: var(--text);
+    }
+    .btn-link:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
     }
     .btn:disabled {
       opacity: 0.5;
@@ -424,20 +452,14 @@ function renderDashboardHTML(hasCfAccess = false) {
 
         <div class="stats-grid">
           <div class="stat-box">
-            <div class="stat-label">Active Target PC</div>
+            <div class="stat-label">Target PC</div>
             <div id="targetPcName" class="stat-value">Checking...</div>
+            <div class="stat-sub">Last seen: <span id="lastSeen">--:--:--</span></div>
           </div>
           <div class="stat-box">
-            <div class="stat-label">Target Details</div>
-            <div id="targetPcDetails" class="stat-value" style="font-size:0.75rem">--</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Starter Device</div>
+            <div class="stat-label">Starter Hardware</div>
             <div id="aodStatus" class="stat-value">Checking...</div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Last Ping Seen</div>
-            <div id="lastSeen" class="stat-value">--:--:--</div>
+            <div class="stat-sub">Firmware: <span id="firmwareVersion" class="ver-val">Checking...</span></div>
           </div>
         </div>
 
@@ -445,7 +467,7 @@ function renderDashboardHTML(hasCfAccess = false) {
         <div class="switch-card">
           <div class="switch-info">
             <h4><span>🔄</span> Automatic Turn On</h4>
-            <p>Always boot server whenever it is detected offline</p>
+            <p>Always boot PC when detected offline</p>
           </div>
           <label class="switch">
             <input type="checkbox" id="autoOnToggle" onchange="toggleAutoOn(this.checked)">
@@ -455,10 +477,10 @@ function renderDashboardHTML(hasCfAccess = false) {
 
         <div class="btn-group">
           <button id="triggerBtn" class="btn btn-primary" onclick="triggerWOL(false)">
-            <span>🚀</span> Start Server (WOL)
+            <span>🚀</span> Start PC (WOL)
           </button>
-          <button id="forceTriggerBtn" class="btn btn-secondary" onclick="triggerWOL(true)">
-            Force Send WOL Packet
+          <button id="forceTriggerBtn" class="btn-link" onclick="triggerWOL(true)">
+            Force send Wake-on-LAN packet
           </button>
         </div>
 
@@ -469,9 +491,7 @@ function renderDashboardHTML(hasCfAccess = false) {
         </div>
 
         <div class="version-fineprint">
-          <span>Worker: <span class="ver-val">${WORKER_VERSION}</span></span>
-          <span>•</span>
-          <span>Firmware: <span id="firmwareVersion" class="ver-val">Checking...</span></span>
+          <span>ServerStarter <span class="ver-val">${WORKER_VERSION}</span></span>
         </div>
       </div>
 
@@ -491,11 +511,11 @@ function renderDashboardHTML(hasCfAccess = false) {
     const statusBadge = document.getElementById('statusBadge');
     const badgeText = document.getElementById('badgeText');
     const targetPcName = document.getElementById('targetPcName');
-    const targetPcDetails = document.getElementById('targetPcDetails');
     const aodStatus = document.getElementById('aodStatus');
     const lastSeen = document.getElementById('lastSeen');
     const alertBox = document.getElementById('alertBox');
     const triggerBtn = document.getElementById('triggerBtn');
+    const forceTriggerBtn = document.getElementById('forceTriggerBtn');
     const autoOnToggle = document.getElementById('autoOnToggle');
     const securityBadgeText = document.getElementById('securityBadgeText');
     const firmwareVersion = document.getElementById('firmwareVersion');
@@ -653,15 +673,10 @@ function renderDashboardHTML(hasCfAccess = false) {
           autoOnToggle.checked = data.auto_turn_on;
         }
 
-        // Update Active Target PC details
-        const pcLabel = data.target_name || 'Server';
+        // Update Active Target PC name
+        const pcLabel = data.target_name || 'Primary PC';
         if (targetPcName) {
           targetPcName.textContent = pcLabel;
-        }
-        if (targetPcDetails) {
-          const mac = data.mac || '';
-          const ip = data.target_ip || '';
-          targetPcDetails.textContent = mac ? (ip ? (mac + ' • ' + ip) : mac) : '--';
         }
 
         // Update Server Status Badge
@@ -685,13 +700,10 @@ function renderDashboardHTML(hasCfAccess = false) {
           triggerBtn.innerHTML = '<span>🚀</span> Start ' + pcLabel + ' (WOL)';
         }
 
-        // AOD Device health
+        // Starter Hardware health
         if (data.aod_alive) {
-          aodStatus.textContent = "CONNECTED";
+          aodStatus.textContent = "ONLINE";
           aodStatus.style.color = "var(--success)";
-          if (data.aod_device_ip) {
-            aodStatus.innerHTML = 'CONNECTED<div style="font-size:0.7rem;font-weight:normal;color:#94a3b8;margin-top:2px"><a href="http://' + data.aod_device_ip + '" target="_blank" style="color:#58a6ff">' + data.aod_device_ip + '</a> &bull; <a href="http://wolstarter.local" target="_blank" style="color:#58a6ff">.local</a></div>';
-          }
         } else {
           aodStatus.textContent = "OFFLINE";
           aodStatus.style.color = "var(--danger)";
