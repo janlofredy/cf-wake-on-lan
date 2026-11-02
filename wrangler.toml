@@ -11,4 +11,4 @@ workers_dev = true
 # 2. Replace the id below with your own KV namespace ID.
 [[kv_namespaces]]
 binding = "WOL_STORE"
-id = "YOUR_KV_NAMESPACE_ID"
+id = "889af1e42a05439b92dd724bda541009"
