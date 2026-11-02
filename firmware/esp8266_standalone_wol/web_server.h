@@ -107,8 +107,13 @@ void handleSetupPage() {
             "<input type='password' name='auth_token' value='");
   html += activeAuthToken;
   html += F("' placeholder='Secret AOD device token' required maxlength='64'></div>"
-            "<hr style='border:0;border-top:1px solid #30363d;margin:12px 0'>"
-            "<div class='grid2'>"
+            "<hr style='border:0;border-top:1px solid #30363d;margin:12px 0'>");
+
+  if (pcProfileCount > 0) {
+    html += "<p style='font-size:11px;color:#58a6ff;margin:2px 0 8px'>ℹ️ Configured PC Profiles: <b>" + String(pcProfileCount) + " saved</b> (Active: <b>" + String(activeServerName) + "</b> &bull; Profiles are safely preserved)</p>";
+  }
+
+  html += F("<div class='grid2'>"
             "<div><label><b>Target MAC Address:</b></label>"
             "<input type='text' name='mac' value='");
   html += activeMacStr;
@@ -249,8 +254,8 @@ void handleSaveSetup() {
 
 // Handler: Root Dashboard (ultra-minimal plain tables)
 void handleRoot() {
-  // If AP mode is active and user accesses root, redirect to setup
-  if (isApModeActive) {
+  // If AP mode is active and not connected to Wi-Fi, redirect to setup
+  if (isApModeActive && WiFi.status() != WL_CONNECTED) {
     handleSetupPage();
     return;
   }
@@ -526,24 +531,32 @@ void handleDeleteProfile() {
 void handleUpdateConfig() {
   bool updated = false;
 
+  byte newMac[6];
+  bool hasNewMac = false;
   if (server.hasArg("mac")) {
     String mStr = server.arg("mac");
     mStr.trim();
-    byte parsedMac[6];
-    if (parseMacAddress(mStr.c_str(), parsedMac)) {
-      saveTargetConfigToEEPROM(parsedMac, activeServerIp);
-      updated = true;
+    if (parseMacAddress(mStr.c_str(), newMac)) {
+      hasNewMac = true;
     }
   }
 
+  String newIp = "";
+  bool hasNewIp = false;
   if (server.hasArg("ip")) {
     String ipStr = server.arg("ip");
     ipStr.trim();
     IPAddress testIp;
     if (testIp.fromString(ipStr)) {
-      saveTargetConfigToEEPROM(activeMac, ipStr.c_str());
-      updated = true;
+      newIp = ipStr;
+      hasNewIp = true;
     }
+  }
+
+  if (hasNewMac || hasNewIp) {
+    saveTargetConfigToEEPROM(hasNewMac ? newMac : activeMac,
+                             hasNewIp ? newIp.c_str() : activeServerIp);
+    updated = true;
   }
 
   if (server.hasArg("tz")) {

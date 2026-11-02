@@ -73,24 +73,64 @@ void loop() {
   server.handleClient();
   MDNS.update();
 
-  // Track Wi-Fi station connectivity transitions to re-announce name services on reconnect
+  // Track Wi-Fi station connectivity
   static bool wasConnected = false;
+  static unsigned long lastStaReconnectAttempt = 0;
+  static unsigned long staDisconnectedSince = 0;
   bool isConnected = (WiFi.status() == WL_CONNECTED);
-  if (isConnected && !wasConnected) {
-    wasConnected = true;
-    startNameServices();
-  } else if (!isConnected && wasConnected) {
-    wasConnected = false;
-    wifiReconnectCount++;
-    Serial.println(F("[WiFi] Station connection dropped."));
-  }
 
-  // Update NTP status and track minimum free heap
-  updateTimeService();
-  updateMinFreeHeap();
+  if (isConnected) {
+    staDisconnectedSince = 0;
 
-  // If running in Setup AP mode without station connection, skip polling loops
-  if (!isConnected) {
+    // Automatically shut down Setup AP hotspot as soon as router / Wi-Fi is accessible!
+    if (isApModeActive) {
+      Serial.println(F("[WiFi] Network accessible! Automatically shutting down Setup AP hotspot..."));
+      stopSetupAP();
+    }
+
+    if (!wasConnected) {
+      wasConnected = true;
+      Serial.printf("[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+      startNameServices();
+      initTimeService(activeTzOffsetHours);
+
+      // Probe target server and sync with Cloudflare immediately
+      bool isOnline = probeServer();
+      currentServerState = isOnline ? STATE_ONLINE : STATE_OFFLINE;
+      lastSentServerState = currentServerState;
+      lastServerCheckTime = millis();
+      updateServerStatusOnCloudflare(currentServerState);
+    }
+  } else {
+    // Station is currently disconnected
+    if (wasConnected) {
+      wasConnected = false;
+      wifiReconnectCount++;
+      staDisconnectedSince = millis();
+      Serial.println(F("[WiFi] Station connection dropped."));
+    }
+    if (staDisconnectedSince == 0) {
+      staDisconnectedSince = millis();
+    }
+
+    // 1. If disconnected for >60s and AP mode not yet active, start Setup AP fallback
+    if (!isApModeActive && (millis() - staDisconnectedSince >= 60000UL)) {
+      Serial.println(F("[WiFi] Station disconnected >60s. Launching Setup AP fallback..."));
+      startSetupAP();
+    }
+
+    // 2. Periodically attempt reconnection to configured Wi-Fi in the background (every 10s)
+    if (strlen(activeWifiSsid) > 0 && (millis() - lastStaReconnectAttempt >= 10000UL)) {
+      lastStaReconnectAttempt = millis();
+      Serial.printf("[WiFi] Background reconnect attempt to '%s'...\n", activeWifiSsid);
+      WiFi.begin(activeWifiSsid, activeWifiPass);
+    }
+
+    // Update NTP status and track minimum free heap
+    updateTimeService();
+    updateMinFreeHeap();
+
+    // Skip polling loops while disconnected from local network
     delay(10);
     return;
   }

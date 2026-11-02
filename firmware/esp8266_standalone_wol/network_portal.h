@@ -50,6 +50,8 @@ bool connectWiFi() {
     return false;
   }
 
+  WiFi.setAutoConnect(true);
+  WiFi.setAutoReconnect(true);
   WiFi.mode(WIFI_STA);
 #ifdef DEVICE_HOSTNAME
   WiFi.hostname(DEVICE_HOSTNAME);
@@ -109,5 +111,9 @@ bool testWifiConnection(const char* ssid, const char* pass, unsigned long timeou
   }
 
   Serial.printf("[WiFi] Background verification failed for SSID: '%s'\n", ssid);
+  // Restore connection attempt to configured Wi-Fi if credentials differed
+  if (strlen(activeWifiSsid) > 0) {
+    WiFi.begin(activeWifiSsid, activeWifiPass);
+  }
   return false;
 }

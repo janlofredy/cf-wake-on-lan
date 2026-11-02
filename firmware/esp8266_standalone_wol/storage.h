@@ -134,14 +134,37 @@ void syncActiveProfilePointers() {
   activeServerName[sizeof(activeServerName) - 1] = '\0';
 }
 
+// Check if 6-byte MAC array is uninitialized (all 0x00 or all 0xFF)
+bool isZeroOrBroadcastMac(const byte* macBytes) {
+  bool allZero = true;
+  bool allFF = true;
+  for (int i = 0; i < 6; i++) {
+    if (macBytes[i] != 0x00) allZero = false;
+    if (macBytes[i] != 0xFF) allFF = false;
+  }
+  return allZero || allFF;
+}
+
 // Read PC Profile from EEPROM
 void readProfileFromEEPROM(uint8_t idx, PcProfile& profile) {
   int base = EEPROM_PROFILES_START_ADDR + (idx * PROFILE_RECORD_SIZE);
   readStringFromEEPROM(base, profile.name, sizeof(profile.name));
+  if (strlen(profile.name) == 0) {
+    snprintf(profile.name, sizeof(profile.name), "PC %u", idx + 1);
+  }
   for (int i = 0; i < 6; i++) {
     profile.mac[i] = EEPROM.read(base + 16 + i);
   }
+  // If MAC is uninitialized in EEPROM and this is profile 0, populate with default SERVER_MAC
+  if (isZeroOrBroadcastMac(profile.mac) && idx == 0) {
+    parseMacAddress(SERVER_MAC, profile.mac);
+  }
+
   readStringFromEEPROM(base + 22, profile.ip, sizeof(profile.ip));
+  if (strlen(profile.ip) == 0 && idx == 0) {
+    strncpy(profile.ip, SERVER_IP, sizeof(profile.ip) - 1);
+    profile.ip[sizeof(profile.ip) - 1] = '\0';
+  }
   byte pLow = EEPROM.read(base + 38);
   byte pHigh = EEPROM.read(base + 39);
   profile.port = (pHigh << 8) | pLow;
@@ -335,15 +358,12 @@ bool saveCfConfigToEEPROM(const char* host, const char* token) {
   return true;
 }
 
-// Save Full Setup Configuration (from first-time setup portal)
+// Save Setup Configuration (preserves existing PC profiles if already configured)
 bool saveAllSetupConfig(const char* ssid, const char* pass, const char* host, const char* token,
-                               const char* macStr, const char* ip, int8_t tz, uint16_t probeSec, uint16_t cfSec,
-                               const char* pcName = "Default PC", uint16_t port = 22) {
+                        const char* macStr, const char* ip, int8_t tz, uint16_t probeSec, uint16_t cfSec,
+                        const char* pcName = "Primary PC", uint16_t port = 22) {
   byte parsedMac[6];
-  if (!parseMacAddress(macStr, parsedMac)) {
-    Serial.println(F("[STORAGE] Failed to parse MAC address during setup save!"));
-    return false;
-  }
+  bool hasValidMac = parseMacAddress(macStr, parsedMac);
 
   // Ensure magic byte is written
   EEPROM.write(EEPROM_MAGIC_ADDR, EEPROM_MAGIC_BYTE);
@@ -353,22 +373,40 @@ bool saveAllSetupConfig(const char* ssid, const char* pass, const char* host, co
   saveTzToEEPROM(tz);
   saveRatesToEEPROM(probeSec, cfSec);
 
-  // Initialize Profile 0 with the configured target
-  PcProfile p0;
-  strncpy(p0.name, pcName, sizeof(p0.name) - 1);
-  p0.name[sizeof(p0.name) - 1] = '\0';
-  memcpy(p0.mac, parsedMac, 6);
-  strncpy(p0.ip, ip, sizeof(p0.ip) - 1);
-  p0.ip[sizeof(p0.ip) - 1] = '\0';
-  p0.port = (port > 0) ? port : 22;
+  // PRESERVE PC PROFILES:
+  // If PC profiles already exist in memory/EEPROM, do NOT wipe them!
+  if (pcProfileCount > 0) {
+    if (hasValidMac) {
+      PcProfile* active = &pcProfiles[activeProfileIdx];
+      memcpy(active->mac, parsedMac, 6);
+      if (strlen(ip) > 0) {
+        strncpy(active->ip, ip, sizeof(active->ip) - 1);
+        active->ip[sizeof(active->ip) - 1] = '\0';
+      }
+      writeProfileToEEPROM(activeProfileIdx, *active);
+    }
+  } else {
+    // Only if EEPROM had 0 profiles (fresh unconfigured chip), initialize Profile 0
+    PcProfile p0;
+    strncpy(p0.name, pcName, sizeof(p0.name) - 1);
+    p0.name[sizeof(p0.name) - 1] = '\0';
+    if (hasValidMac) {
+      memcpy(p0.mac, parsedMac, 6);
+    } else {
+      parseMacAddress(SERVER_MAC, p0.mac);
+    }
+    strncpy(p0.ip, (strlen(ip) > 0) ? ip : SERVER_IP, sizeof(p0.ip) - 1);
+    p0.ip[sizeof(p0.ip) - 1] = '\0';
+    p0.port = (port > 0) ? port : 22;
 
-  writeProfileToEEPROM(0, p0);
-  pcProfiles[0] = p0;
-  pcProfileCount = 1;
-  activeProfileIdx = 0;
+    writeProfileToEEPROM(0, p0);
+    pcProfiles[0] = p0;
+    pcProfileCount = 1;
+    activeProfileIdx = 0;
 
-  EEPROM.write(EEPROM_PROFILE_COUNT_ADDR, pcProfileCount);
-  EEPROM.write(EEPROM_ACTIVE_PROFILE_ADDR, activeProfileIdx);
+    EEPROM.write(EEPROM_PROFILE_COUNT_ADDR, pcProfileCount);
+    EEPROM.write(EEPROM_ACTIVE_PROFILE_ADDR, activeProfileIdx);
+  }
 
   bool ok = EEPROM.commit();
   syncActiveProfilePointers();
